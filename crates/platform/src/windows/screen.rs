@@ -83,7 +83,7 @@ use crate::{
     },
 };
 
-const NO_POINTER: &str = "Cannot find the pointer. Try again.";
+const NO_POINTER: &str = "Can't find the pointer. Try again.";
 
 /// The longest pause between capture passes; a pass's own work counts toward it.
 const POLL: Duration = Duration::from_millis(10);
@@ -170,7 +170,7 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
     let window = Window(window as isize);
     match window_part(display, window) {
         Ok(Some(part)) => Ok(Some((window, part))),
-        Ok(None) => bail!("Cannot measure the window under the pointer. Try again."),
+        Ok(None) => bail!("Can't measure the window under the pointer. Try again."),
         Err(_) => Ok(None),
     }
 }
@@ -257,7 +257,7 @@ pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
     let pointer = pointer_location().context(NO_POINTER)?;
 
     describe(unsafe { MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST) })
-        .context("Cannot measure the display under the pointer")
+        .context("Can't measure the display under the pointer")
 }
 
 fn describe(
@@ -279,7 +279,7 @@ fn describe(
             &raw mut vertical_dpi,
         )
     };
-    ensure!(scaled >= 0 && dpi > 0, "Cannot read the display's scale");
+    ensure!(scaled >= 0 && dpi > 0, "Can't read the display's scale");
     let native = Display {
         monitor: monitor as isize,
         edges: edges(info.rcMonitor),
@@ -733,9 +733,9 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Window(gone) => gone.fmt(f),
-            Self::Exposed => f.write_str(
-                "Cannot keep Speakeasy's windows out of the Show. Start the Show again.",
-            ),
+            Self::Exposed => {
+                f.write_str("Can't keep Speakeasy's windows out of the Show. Start the Show again.")
+            },
             Self::DisplayLost => {
                 f.write_str("The recorded display was disconnected. Start the Show again.")
             },
@@ -759,7 +759,7 @@ pub(crate) fn configure_overlay(window: &NativeWindow, display: Display) -> anyh
 
     // Exclusion must succeed before the overlay can cover the display.
     ok_or_last_error(unsafe { SetWindowDisplayAffinity(hwnd, WDA_EXCLUDEFROMCAPTURE) })
-        .context("Cannot keep the Show overlay out of screen capture")?;
+        .context("Can't keep the Show overlay out of screen capture")?;
 
     // The overlay is the pill's click-through popup, stretched over the display.
     window.configure_pill()?;

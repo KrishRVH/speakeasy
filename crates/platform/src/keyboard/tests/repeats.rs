@@ -35,11 +35,11 @@ fn a_key_already_down_when_a_hold_starts_never_acts_on_its_repeats() {
         ..NO_MODIFIERS
     };
     for (shortcut, talk) in [
-        (MacShortcut::Function, MAC_FN),
-        (MacShortcut::RightOption, MAC_RIGHT_OPTION),
+        (MacShortcut::FUNCTION, MAC_FN),
+        (MacShortcut::RIGHT_OPTION, MAC_RIGHT_OPTION),
     ] {
         for (code, _, action) in actions {
-            let mut mac = Mac::new(shortcut);
+            let mut mac = Mac::new(only(shortcut));
             assert!(
                 !mac.observe(key(code, true, NO_MODIFIERS), keyboard_fn_up, start)
                     .swallows()
@@ -62,9 +62,9 @@ fn a_key_already_down_when_a_hold_starts_never_acts_on_its_repeats() {
         }
     }
 
-    for shortcut in [WindowsShortcut::ControlWindows, WindowsShortcut::F13] {
+    for shortcut in [WindowsShortcut::CONTROL_WINDOWS, WindowsShortcut::F13] {
         for (_, vk, action) in actions {
-            let mut policy = Windows::new(shortcut);
+            let mut policy = Windows::new(only(shortcut));
             assert!(!policy.observe(vk, true, NONE_HELD, start).swallows());
             let chord = if shortcut == WindowsShortcut::F13 {
                 assert!(policy.observe(0x7C, true, NONE_HELD, start).starts());
@@ -109,10 +109,10 @@ fn a_swallowed_key_stays_swallowed_when_the_alternative_shortcut_is_released_fir
         ..NO_MODIFIERS
     };
     for (shortcut, code) in [
-        (MacShortcut::RightOption, MAC_RIGHT_OPTION),
-        (MacShortcut::RightCommand, MAC_RIGHT_COMMAND),
+        (MacShortcut::RIGHT_OPTION, MAC_RIGHT_OPTION),
+        (MacShortcut::RIGHT_COMMAND, MAC_RIGHT_COMMAND),
     ] {
-        let mut mac = Mac::new(shortcut);
+        let mut mac = Mac::new(only(shortcut));
         assert!(
             mac.observe(mac_modifier(code, true), keyboard_fn_up, start)
                 .starts()
@@ -140,8 +140,8 @@ fn a_swallowed_key_stays_swallowed_when_the_alternative_shortcut_is_released_fir
         );
     }
 
-    let right_control = held_for(WindowsShortcut::RightControl, &[RIGHT_CONTROL]);
-    let mut policy = Windows::new(WindowsShortcut::RightControl);
+    let right_control = held_for(WindowsShortcut::RIGHT_CONTROL, &[RIGHT_CONTROL]);
+    let mut policy = Windows::new(only(WindowsShortcut::RIGHT_CONTROL));
     assert!(
         policy
             .observe(RIGHT_CONTROL, true, NONE_HELD, start)
@@ -223,7 +223,7 @@ fn mac_takes_autorepeat_from_the_event_for_hold_keys() {
 
 #[test]
 fn a_held_hold_key_stays_swallowed_however_the_hold_ends_until_it_is_released_or_pressed_afresh() {
-    type Ending = (&'static str, fn(&mut Chord));
+    type Ending = (&'static str, fn(&mut Talk));
     let ends: [Ending; 3] = [
         ("a release", |chord| assert!(chord.release().is_some())),
         ("a missed release", |chord| assert!(chord.reconcile(false))),
@@ -231,7 +231,7 @@ fn a_held_hold_key_stays_swallowed_however_the_hold_ends_until_it_is_released_or
     ];
     for key in [HoldKey::Space, HoldKey::Submit] {
         for (ending, end) in ends {
-            let mut chord = Chord::default();
+            let mut chord = Talk::default();
             assert_eq!(chord.press(), Some(Action::Press));
             assert!(chord.hold_key(key, Stroke::Press).swallows());
             assert!(

@@ -187,7 +187,7 @@ impl Detail {
         let mut scene = None;
         match entry.show {
             Err(error) => warnings.push(format!(
-                "Cannot read this Show: {error:#}. Its summary may still be readable."
+                "Can't read this Show: {error:#}. Its summary may still be readable."
             )),
             Ok(show) => {
                 inspected = show.movie;
@@ -233,8 +233,8 @@ impl Detail {
                 Ok(source) => {
                     source_available = true;
                     coverage = format!(
-                        "{} retained samples from {} arrivals · longest gap {} ms · source images \
-                         have no annotations",
+                        "{} saved frames of {} captured · longest gap {} ms · these images have \
+                         no annotations",
                         source.moments().len(),
                         source.arrivals(),
                         source::longest_gap(&source)
@@ -261,7 +261,7 @@ impl Detail {
                 scene,
             );
             coverage = format!(
-                "{} video samples · annotation record through {}",
+                "{} video frames · annotations recorded through {}",
                 frames.len(),
                 Stamp(annotations)
             );
@@ -280,7 +280,7 @@ impl Detail {
 }
 
 pub(super) fn summary(directory: &Path) -> Result<String, String> {
-    recall::summary(directory).map_err(|error| format!("Cannot read summary.md: {error}"))
+    recall::summary(directory).map_err(|error| format!("Can't read summary.md: {error}"))
 }
 
 fn ending(recording: &Recording) -> Option<String> {

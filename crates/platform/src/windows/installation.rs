@@ -9,7 +9,7 @@ const REGISTRATION: &str =
 
 pub fn installed_directory() -> anyhow::Result<Option<PathBuf>> {
     let location = registry::text(REGISTRATION, "InstallLocation").context(
-        "Cannot read the Windows installation. Open the release page to update manually.",
+        "Can't read the Windows installation. Open the release page to update manually.",
     )?;
     Ok(location.map(PathBuf::from))
 }

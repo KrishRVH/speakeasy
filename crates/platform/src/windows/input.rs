@@ -84,8 +84,10 @@ pub(crate) fn start(
     input: InputSender,
     options: DesktopOptions,
     own_focus: OwnFocus,
+    recording: Arc<keyboard::Recording>,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let shortcut = options.shortcut_key.windows;
+    let shortcuts = options.windows;
+    let shortcut = shortcuts.talk;
     let typed = insertion::KeyCount::default();
     let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, {
         let typed = typed.clone();
@@ -101,7 +103,16 @@ pub(crate) fn start(
     let stop = Arc::new(StopEvent::new()?);
     let thread = OwnedThread::spawn("input-monitor", {
         let stop = Arc::clone(&stop);
-        move || monitor(&input, &stop, shortcut, typed)
+        move || {
+            let state = HookState {
+                input: input.clone(),
+                shortcut,
+                policy: keyboard::Windows::new(shortcuts),
+                typed,
+                recording,
+            };
+            monitor(&input, &stop, state);
+        }
     })?;
     Ok((thread, Monitor { stop, insertion }, inserter))
 }
@@ -126,21 +137,29 @@ impl StopEvent {
 
 struct HookState {
     input: InputSender,
+    /// The talk shortcut.
     shortcut: crate::WindowsShortcut,
     policy: keyboard::Windows,
     typed: insertion::KeyCount,
+    recording: Arc<keyboard::Recording>,
 }
 
 impl HookState {
     fn observe(&mut self, key: u32, down: bool) -> bool {
         // Async key state does not reflect this event until the hook returns.
+        let recorded = keyboard::Windows::recorded(key, down, is_key_down);
+        if let Some(swallow) = self.recording.observe(recorded) {
+            self.policy.track(key, down);
+            if down && keyboard::Windows::menu_held(key, down, is_key_down) {
+                post_mask_start();
+            }
+            return swallow;
+        }
         let physical = keyboard::Physical::read(self.shortcut, is_key_down);
         let decision = self.policy.observe(key, down, physical, Instant::now());
         decision.deliver(&self.input);
-        if decision.starts() && self.shortcut == crate::WindowsShortcut::ControlWindows {
-            unsafe {
-                PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
-            }
+        if decision.uses_modifiers() && keyboard::Windows::menu_held(key, down, is_key_down) {
+            post_mask_start();
         }
         if keyboard::Windows::types(key, down, &decision) {
             self.typed.add();
@@ -316,18 +335,9 @@ impl Registration {
     }
 }
 
-fn monitor(
-    input: &InputSender,
-    stop: &StopEvent,
-    shortcut: crate::WindowsShortcut,
-    typed: insertion::KeyCount,
-) {
-    HOOK.set(Some(HookState {
-        input: input.clone(),
-        shortcut,
-        policy: keyboard::Windows::new(shortcut),
-        typed,
-    }));
+fn monitor(input: &InputSender, stop: &StopEvent, state: HookState) {
+    let shortcut = state.shortcut;
+    HOOK.set(Some(state));
     let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, stop, shortcut)))
         .unwrap_or_else(|_| Err(io::Error::other("it stopped unexpectedly")));
     if let Err(error) = watched
@@ -335,7 +345,7 @@ fn monitor(
         && !input.is_closed()
     {
         input.deliver(Input::Unavailable(format!(
-            "Cannot watch the dictation shortcut ({error}). Resume dictation to try again."
+            "Can't watch the dictation shortcut ({error}). Resume dictation to try again."
         )));
     }
     // `run_event_loop` has removed the hook, notifications, and window, so no callback remains.
@@ -366,7 +376,7 @@ fn run_event_loop(
         return Ok(());
     }
     input.deliver(Input::DesktopReady {
-        shortcut: shortcut.label().into(),
+        shortcut: shortcut.label(),
         cancel: CANCEL_SHORTCUT.into(),
         globe_shortcut: false,
     });
@@ -496,7 +506,14 @@ fn interrupts_recording(message: u32, wparam: WPARAM) -> bool {
     }
 }
 
-/// Marks Win as used: Win released with no other key opens Start.
+/// Asks the message loop to mask Start; the hook itself must return within its time limit.
+fn post_mask_start() {
+    unsafe {
+        PostThreadMessageW(GetCurrentThreadId(), MASK_START, 0, 0);
+    }
+}
+
+/// Marks Win and Alt as used: either released with no other key opens Start or a menu bar.
 fn mask_start_menu() {
     #[expect(
         clippy::let_underscore_must_use,

@@ -46,7 +46,7 @@ impl Target {
     pub(super) fn new(show: &Path, destination: &Path, kind: &'static str) -> anyhow::Result<Self> {
         let show = show
             .canonicalize()
-            .context("Cannot open the Show to export")?;
+            .context("Can't open the Show to export")?;
         let path = std::path::absolute(destination)?;
         anyhow::ensure!(
             !path.exists(),
@@ -60,7 +60,7 @@ impl Target {
         anyhow::ensure!(
             !folder
                 .canonicalize()
-                .context("Cannot open the export folder; choose an existing folder")?
+                .context("Can't open the export folder; choose an existing folder")?
                 .starts_with(&show),
             "Choose an export location outside the original Show"
         );
@@ -80,7 +80,7 @@ impl Target {
         let mut staging = tempfile::Builder::new()
             .prefix(prefix)
             .tempfile_in(&self.folder)
-            .context("Cannot create the export; check the destination folder and free space")?;
+            .context("Can't create the export; check the destination folder and free space")?;
         let value = write(&mut staging)?;
         let bytes = staging.as_file().metadata()?.len();
         staging
@@ -88,7 +88,7 @@ impl Target {
             .map_err(|error| error.error)
             .with_context(|| {
                 format!(
-                    "Cannot save the export; choose a new {} path and check free space",
+                    "Can't save the export; choose a new {} path and check free space",
                     self.kind
                 )
             })?;
@@ -100,7 +100,7 @@ fn archive(
     directory: &Path,
     writer: &mut (impl io::Write + Seek),
 ) -> anyhow::Result<(usize, bool)> {
-    let bytes = fs::read(directory.join(Manifest::FILE)).context("Cannot export show.json")?;
+    let bytes = fs::read(directory.join(Manifest::FILE)).context("Can't export show.json")?;
     let manifest = Manifest::parse(&bytes)?;
     let mut archive = ZipWriter::new(writer);
     let options = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
@@ -112,7 +112,7 @@ fn archive(
         } else {
             File::open(directory.join(&name))
                 .and_then(|mut file| io::copy(&mut file, &mut archive))
-                .with_context(|| format!("Cannot export {name}"))?;
+                .with_context(|| format!("Can't export {name}"))?;
         }
         files = files.saturating_add(1);
     }
@@ -120,16 +120,16 @@ fn archive(
     if retained_frames {
         archive.start_file(source::FILE, options)?;
         io::copy(&mut File::open(directory.join(source::FILE))?, &mut archive)
-            .context("Cannot export retained frames")?;
+            .context("Can't export retained frames")?;
         files = files.saturating_add(1);
     }
     let mut movie = movie::Reading::optional(directory, manifest.recording().duration)
-        .context("Cannot export damaged video")?;
+        .context("Can't export damaged video")?;
     if let Some(reading) = &mut movie {
         archive.start_file(movie::FILE, options)?;
         reading
             .copy_to(&mut archive)
-            .context("Cannot export video")?;
+            .context("Can't export video")?;
         archive.start_file(movie::HEADER, options)?;
         archive.write_all(&serde_json::to_vec(&reading.movie.metadata)?)?;
         files = files.saturating_add(2);

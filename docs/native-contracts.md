@@ -13,6 +13,14 @@ On Windows and macOS the insertion thread owns the clipboard snapshot; see
 [commit](../crates/platform/src/insertion/commit.rs). Adapters keep synthetic input buffers alive
 through submission and split direct text at valid encoding boundaries.
 
+## Shortcut recording
+
+Settings starts a recording through the [input monitor](../crates/platform/src/desktop.rs), and the
+Windows hook or macOS tap serves it on the input thread through the shared
+[recording](../crates/platform/src/keyboard.rs), ahead of every shortcut. Dropping the receiver ends
+it before the next key, so a closed Settings window never withholds a key. A key the recording takes
+stays withheld through its release, so the focused app never sees half a keystroke.
+
 ## Child process containment
 
 Terminate a [process group](../crates/platform/src/process.rs) before reaping its leader;
@@ -27,7 +35,8 @@ portal stream, never through libei.
 ## Mac AppKit ownership
 
 Use AppKit windows and status items on the main thread. Adopt Create-rule Core Foundation references
-once and keep Get-rule borrows tied to their owner. See the
+once and keep Get-rule borrows tied to their owner. Read the keyboard layout through Text Input
+Sources only on the main thread; elsewhere shortcut labels fall back to US names. See the
 [macOS adapter](../crates/platform/src/macos.rs).
 
 ## Movie presentation and checkpoint lease

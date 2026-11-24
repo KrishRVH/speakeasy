@@ -37,7 +37,7 @@ pub(crate) fn new() -> anyhow::Result<(Application, Presentation)> {
     let platform: std::rc::Rc<dyn Platform> = cfg_select! {
         target_os = "windows" => std::rc::Rc::new(anyhow::Context::context(
             gpui_windows::WindowsPlatform::new(false),
-            "Cannot start the Windows interface",
+            "Can't start the Windows interface",
         )?),
         target_os = "macos" => std::rc::Rc::new(gpui_macos::MacPlatform::new(false)),
         target_os = "linux" => gpui_linux::linux_platform(presentation.windowing()),

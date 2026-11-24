@@ -66,7 +66,7 @@ impl LocalSpeech {
         let port = TcpListener::bind((LOOPBACK, 0))?.local_addr()?.port();
         let client = engine_client()?;
         let mut child = server_command(&config, port).spawn().context(
-            "Cannot start the speech engine. Check the selected engine executable and its native dependencies.",
+            "Can't start the speech engine. Check the selected engine executable and its native dependencies.",
         )?;
         let group = contain(&mut child).await?;
         let protocol = match config.engine {
@@ -519,7 +519,7 @@ async fn contain(child: &mut Child) -> anyhow::Result<ProcessGroup> {
         Err(error) => {
             kill_and_reap(child).await;
             Err(anyhow!(
-                "Cannot start the speech engine under Speakeasy's control ({error:#}). Restart Speakeasy, then try again."
+                "Can't start the speech engine under Speakeasy's control ({error:#}). Restart Speakeasy, then try again."
             ))
         },
     }

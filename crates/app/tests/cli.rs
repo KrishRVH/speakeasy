@@ -81,7 +81,7 @@ fn an_isolated_console_entry_never_launches_the_app_for_help_or_invalid_options(
     assert!(String::from_utf8(rejected.stderr)?.contains("Use show"));
     let missing = Command::new(&isolated).args(["show", "list"]).output()?;
     assert_eq!(missing.status.code(), Some(2));
-    assert!(String::from_utf8(missing.stderr)?.contains("Cannot start"));
+    assert!(String::from_utf8(missing.stderr)?.contains("Can't start"));
     Ok(())
 }
 

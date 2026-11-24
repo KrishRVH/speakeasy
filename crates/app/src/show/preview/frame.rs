@@ -37,7 +37,7 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
                 scene.as_deref(),
                 cancelled,
             )
-            .map_err(|error| format!("Cannot read video frame: {error:#}"));
+            .map_err(|error| format!("Can't read video frame: {error:#}"));
         },
     };
     if cancelled() {
@@ -52,12 +52,12 @@ pub(super) fn read(request: Request, cancelled: &dyn Fn() -> bool) -> Result<Dec
 
 fn png(directory: &Path, name: &str, cancelled: &dyn Fn() -> bool) -> Result<RgbaImage, String> {
     let bytes = std::fs::read(directory.join(name))
-        .map_err(|error| format!("Cannot open {name}: {error}"))?;
+        .map_err(|error| format!("Can't open {name}: {error}"))?;
     if cancelled() {
         return Err(CANCELLED.into());
     }
     let mut pixels = image::load_from_memory_with_format(&bytes, image::ImageFormat::Png)
-        .map_err(|error| format!("Cannot decode {name}: {error}"))?
+        .map_err(|error| format!("Can't decode {name}: {error}"))?
         .into_rgba8();
     for Rgba([red, _, blue, _]) in pixels.pixels_mut() {
         std::mem::swap(red, blue);
@@ -71,9 +71,9 @@ fn retained(
     requested: Moment,
 ) -> Result<(RgbaImage, Moment), String> {
     let SourceFrame { at, image } = source::frame(directory, index, requested)
-        .map_err(|error| format!("Cannot read source frame: {error:#}"))?;
+        .map_err(|error| format!("Can't read source frame: {error:#}"))?;
     let pixels = RgbaImage::from_raw(image.width(), image.height(), image.into_bgra())
-        .ok_or_else(|| "Cannot read source frame: invalid frame dimensions".to_owned())?;
+        .ok_or_else(|| "Can't read source frame: invalid frame dimensions".to_owned())?;
     Ok((pixels, at))
 }
 

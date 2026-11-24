@@ -49,7 +49,7 @@ impl Buffers {
                     Some(attributes.as_opaque()),
                     NonNull::from(&mut pool)
                 ) == kCVReturnSuccess,
-                "Cannot create native video buffers"
+                "Can't create native video buffers"
             );
             CFRetained::from_raw(NonNull::new(pool).context("Native video pool is missing")?)
         };
@@ -82,7 +82,7 @@ impl Buffers {
                     &self.pool,
                     NonNull::from(&mut buffer)
                 ) == kCVReturnSuccess,
-                "Cannot create a native video buffer"
+                "Can't create a native video buffer"
             );
             CFRetained::from_raw(NonNull::new(buffer).context("Native video buffer is missing")?)
         };
@@ -128,7 +128,7 @@ impl Buffers {
                     &buffer,
                     NonNull::from(&mut format)
                 ) == 0,
-                "Cannot describe native video pixels"
+                "Can't describe native video pixels"
             );
             let format = CFRetained::from_raw(
                 NonNull::new(format.cast_mut()).context("Native video format is missing")?,
@@ -146,7 +146,7 @@ impl Buffers {
                     NonNull::from(&mut timing),
                     NonNull::from(&mut sample)
                 ) == 0,
-                "Cannot create a native video sample"
+                "Can't create a native video sample"
             );
             Ok(CFRetained::from_raw(
                 NonNull::new(sample).context("Native video sample is missing")?,
@@ -166,7 +166,7 @@ impl<'a> Locked<'a> {
         let status = unsafe { CVPixelBufferLockBaseAddress(buffer, CVPixelBufferLockFlags(0)) };
         ensure!(
             status == kCVReturnSuccess,
-            "Cannot write native video pixels"
+            "Can't write native video pixels"
         );
         Ok(Self(buffer))
     }

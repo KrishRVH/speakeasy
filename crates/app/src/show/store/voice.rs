@@ -33,10 +33,10 @@ pub(super) fn retain(kept: &Path, staged: &Staged) -> anyhow::Result<()> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
         copied => copied
             .map(|_bytes| ())
-            .context("Cannot save the Show's voice"),
+            .context("Can't save this Show's audio"),
     }
 }
 
 pub(crate) fn read(directory: &Path) -> anyhow::Result<Option<KeptAudio>> {
-    audio::read(&directory.join(FILE)).context("Cannot read this Show's voice")
+    audio::read(&directory.join(FILE)).context("Can't read this Show's audio")
 }

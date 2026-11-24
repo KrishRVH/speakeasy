@@ -116,9 +116,9 @@ fn dictation_menu(service: ServiceState, snapshot: &Snapshot, mode: LaunchMode) 
             enabled: startable && activity == Activity::Idle && snapshot.last_dictation,
         },
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        show_screen: show("Show screen"),
+        show_screen: show("Record the screen for a Show"),
         #[cfg(any(target_os = "windows", target_os = "macos"))]
-        show_area: show("Show area…"),
+        show_area: show("Record an area for a Show…"),
     }
 }
 

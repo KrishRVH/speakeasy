@@ -198,7 +198,7 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
 
     {
         let space = CGColorSpace::with_name(Some(unsafe { kCGColorSpaceSRGB }))
-            .context("Cannot create the video color space")?;
+            .context("Can't create the video color space")?;
 
         // SAFETY: the context draws into `pixels` and drops at the end of this block, before
         // `pixels` moves.
@@ -213,7 +213,7 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
                 CGImageByteOrderInfo::Order32Little.0 | CGImageAlphaInfo::PremultipliedFirst.0,
             )
         }
-        .context("Cannot create the video pixel buffer")?;
+        .context("Can't create the video pixel buffer")?;
 
         // Bitmap drawing keeps raster row order; a view-style flip would invert the rows.
         CGContext::draw_image(

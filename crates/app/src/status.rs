@@ -9,6 +9,8 @@ pub(crate) const PAUSED: &str = "Dictation paused";
 pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
 pub(crate) const UNCONFIGURED: &str = "Speakeasy is not set up yet.";
 pub(crate) const RESETTING: &str = "Removing settings and downloads…";
+/// A failure with no narrower name; the message in Settings says what happened.
+const ATTENTION: &str = "Needs attention";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum ServiceState {
@@ -52,7 +54,10 @@ impl Status {
         let (indicator, description) = match (service, snapshot.phase, snapshot.desktop_ready) {
             (ServiceState::Quitting, ..) => (Indicator::Busy, QUITTING.into()),
             (ServiceState::Pausing, ..) => (Indicator::Busy, PAUSING.into()),
-            (_, Phase::Error, _) => (Indicator::Attention, "Needs attention".into()),
+            (_, Phase::Error, _) => (
+                Indicator::Attention,
+                snapshot.trouble.unwrap_or(ATTENTION).into(),
+            ),
             (ServiceState::Paused, ..) => (Indicator::Paused, PAUSED.into()),
             (ServiceState::NotSetUp, ..) => (Indicator::Paused, "Not set up".into()),
             (ServiceState::Running, _, false) => {
@@ -280,6 +285,10 @@ mod tests {
         let ready = at(Phase::Idle, ModelState::Ready);
         let unavailable = at(Phase::Idle, ModelState::Unavailable);
         let failed = at(Phase::Error, ModelState::Ready);
+        let microphone = Snapshot {
+            trouble: Some("Microphone unavailable"),
+            ..failed.clone()
+        };
         for (snapshot, service, inside, outside) in [
             (
                 &ready,
@@ -305,6 +314,12 @@ mod tests {
                 ServiceState::Running,
                 "Needs attention",
                 "Needs attention · Open Settings",
+            ),
+            (
+                &microphone,
+                ServiceState::Running,
+                "Microphone unavailable",
+                "Microphone unavailable · Open Settings",
             ),
         ] {
             let status = Status::new(snapshot, service, "Parakeet v3");

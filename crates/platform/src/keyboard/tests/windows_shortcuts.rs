@@ -4,7 +4,7 @@ const F13: u32 = 0x7C;
 const LETTER_C: u32 = 0x43;
 
 fn right_control_holding(at: Instant) -> Windows {
-    let mut policy = Windows::new(WindowsShortcut::RightControl);
+    let mut policy = Windows::new(only(WindowsShortcut::RIGHT_CONTROL));
     assert!(policy.observe(RIGHT_CONTROL, true, NONE_HELD, at).starts());
     policy
 }
@@ -12,7 +12,7 @@ fn right_control_holding(at: Instant) -> Windows {
 #[test]
 fn right_control_dictates_alone_and_leaves_quick_combinations_to_the_app() {
     let pressed = now();
-    let held = held_for(WindowsShortcut::RightControl, &[RIGHT_CONTROL]);
+    let held = held_for(WindowsShortcut::RIGHT_CONTROL, &[RIGHT_CONTROL]);
 
     let mut policy = right_control_holding(pressed);
     let copy = policy.observe(LETTER_C, true, held, pressed);
@@ -37,18 +37,18 @@ fn right_control_dictates_alone_and_leaves_quick_combinations_to_the_app() {
 
 #[test]
 fn right_control_ignores_the_left_control_and_win_keys_of_other_shortcuts() {
-    let mut policy = Windows::new(WindowsShortcut::RightControl);
+    let mut policy = Windows::new(only(WindowsShortcut::RIGHT_CONTROL));
     assert_eq!(
         policy.observe(LEFT_CONTROL, true, NONE_HELD, now()).action,
         None
     );
-    let both = held_for(WindowsShortcut::RightControl, &[LEFT_CONTROL]);
+    let both = held_for(WindowsShortcut::RIGHT_CONTROL, &[LEFT_CONTROL]);
     assert!(
         !policy.observe(RIGHT_CONTROL, true, both, now()).starts(),
         "Ctrl+Right Ctrl is another shortcut"
     );
 
-    let mut policy = Windows::new(WindowsShortcut::RightControl);
+    let mut policy = Windows::new(only(WindowsShortcut::RIGHT_CONTROL));
     policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
     assert!(
         !policy
@@ -60,7 +60,7 @@ fn right_control_ignores_the_left_control_and_win_keys_of_other_shortcuts() {
 
 #[test]
 fn windows_f13_is_reserved_and_its_repeats_never_restart() {
-    let mut policy = Windows::new(WindowsShortcut::F13);
+    let mut policy = Windows::new(only(WindowsShortcut::F13));
     let press = policy.observe(F13, true, NONE_HELD, now());
     assert!(press.starts());
     assert!(press.swallows(), "F13 must not reach the focused app");
@@ -72,7 +72,7 @@ fn windows_f13_is_reserved_and_its_repeats_never_restart() {
     assert_eq!(release.action, Some(Action::Release));
     assert!(release.swallows());
 
-    let mut policy = Windows::new(WindowsShortcut::F13);
+    let mut policy = Windows::new(only(WindowsShortcut::F13));
     policy.observe(LEFT_CONTROL, true, NONE_HELD, now());
     assert!(
         !policy
@@ -90,9 +90,9 @@ fn the_chosen_windows_key_holds_the_paste_and_shift_still_draws_beside_it() {
             keys.contains(&key) || (key == CONTROL && control)
         })
     };
-    assert!(read(WindowsShortcut::RightControl, &[RIGHT_CONTROL]).any());
-    assert!(read(WindowsShortcut::RightControl, &[SHIFT, RIGHT_CONTROL]).draws());
-    assert!(!read(WindowsShortcut::RightControl, &[SHIFT, LEFT_CONTROL]).draws());
+    assert!(read(WindowsShortcut::RIGHT_CONTROL, &[RIGHT_CONTROL]).any());
+    assert!(read(WindowsShortcut::RIGHT_CONTROL, &[SHIFT, RIGHT_CONTROL]).draws());
+    assert!(!read(WindowsShortcut::RIGHT_CONTROL, &[SHIFT, LEFT_CONTROL]).draws());
     assert!(!read(WindowsShortcut::F13, &[F13]).any());
     assert!(read(WindowsShortcut::F13, &[SHIFT, F13]).draws());
     assert!(!read(WindowsShortcut::F13, &[SHIFT, CONTROL]).draws());

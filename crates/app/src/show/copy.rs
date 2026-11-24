@@ -34,7 +34,7 @@ impl Request {
             #[cfg(any(target_os = "windows", target_os = "macos", test))]
             Self::Saved(show) => show.summary()?.map(ClipboardContent::text).transpose(),
             Self::Summary(directory) => ClipboardContent::text(
-                recall::summary(&directory).context("Cannot read summary.md")?,
+                recall::summary(&directory).context("Can't read summary.md")?,
             )
             .map(Some),
             Self::Agent(directory) => agent_prompt(&directory, || wsl.found())?
@@ -63,7 +63,7 @@ fn agent_prompt(
 ) -> anyhow::Result<Option<String>> {
     let entry = match recall::Entry::open(directory, None) {
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
-        entry => entry.context("Cannot open this Show")?,
+        entry => entry.context("Can't open this Show")?,
     };
     let sheets: Vec<PathBuf> = entry.show.as_ref().map_or_else(
         |_unreadable| Vec::new(),
@@ -180,7 +180,7 @@ impl Copies {
                 Ok(Outcome::Copied)
             };
             let result = attempt()
-                .map_err(|error: anyhow::Error| format!("Cannot copy this Show: {error:#}"));
+                .map_err(|error: anyhow::Error| format!("Can't copy this Show: {error:#}"));
             #[expect(
                 clippy::let_underscore_must_use,
                 reason = "Closing the requesting view cancels uncommitted work and drops its receipt; committed native work still drains"

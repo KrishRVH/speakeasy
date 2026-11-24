@@ -25,6 +25,7 @@ use core_foundation::{
     array::CFArray,
     base::{CFType, TCFType, kCFAllocatorDefault},
     boolean::CFBoolean,
+    data::CFData,
     dictionary::CFDictionary,
     mach_port::CFMachPort,
     number::CFNumber,
@@ -91,8 +92,10 @@ pub(super) fn start(
     input: InputSender,
     options: DesktopOptions,
     own_focus: OwnFocus,
+    recording: Arc<keyboard::Recording>,
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
-    let shortcut = options.shortcut_key.mac;
+    let shortcuts = options.mac;
+    let shortcut = shortcuts.talk;
     let typed = insertion::KeyCount::default();
     let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, {
         let typed = typed.clone();
@@ -111,8 +114,9 @@ pub(super) fn start(
     )]
     let policy = Arc::new(SharedPolicy {
         shortcut,
-        policy: Mutex::new(keyboard::Mac::new(shortcut)),
+        policy: Mutex::new(keyboard::Mac::new(shortcuts)),
         typed,
+        recording,
     });
     let control = Arc::new(MonitorControl::default());
     let observers = lifecycle_observers(&input, &policy, &control);
@@ -139,9 +143,9 @@ impl RunLoopReady<'_> {
         let run_loop = CFRunLoop::get_current();
         let started = self.control.start(run_loop.clone(), || {
             self.input.deliver(Input::DesktopReady {
-                shortcut: self.shortcut.label().into(),
+                shortcut: self.shortcut.label(),
                 cancel: CANCEL_SHORTCUT.into(),
-                globe_shortcut: self.shortcut == MacShortcut::Function,
+                globe_shortcut: self.shortcut == MacShortcut::FUNCTION,
             });
         });
         if !started || self.input.is_closed() {
@@ -151,6 +155,7 @@ impl RunLoopReady<'_> {
 }
 
 struct SharedPolicy {
+    /// The talk shortcut.
     shortcut: MacShortcut,
     #[expect(
         clippy::disallowed_types,
@@ -158,6 +163,7 @@ struct SharedPolicy {
     )]
     policy: Mutex<keyboard::Mac>,
     typed: insertion::KeyCount,
+    recording: Arc<keyboard::Recording>,
 }
 
 impl SharedPolicy {
@@ -238,7 +244,7 @@ fn lifecycle_observers(
     ]
 }
 
-const UNWATCHED: &str = "Cannot watch the dictation shortcut. Resume dictation to try again.";
+const UNWATCHED: &str = "Can't watch the dictation shortcut. Resume dictation to try again.";
 
 fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &SharedPolicy) {
     let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, control, policy)))
@@ -446,6 +452,7 @@ fn observe(
 ) -> CallbackResult {
     let shortcut = policy.shortcut;
     let typed = &policy.typed;
+    let recording = &policy.recording;
     let mut policy = policy.lock();
     if matches!(
         kind,
@@ -462,7 +469,8 @@ fn observe(
     let code = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
 
     // Both Core Graphics bindings use the same `CGEventFlags` bits; see `modifiers_for`.
-    let held = shortcut.modifiers(event.get_flags().bits());
+    let flags = event.get_flags().bits();
+    let held = shortcut.modifiers(flags);
     let key_event = match kind {
         CGEventType::KeyDown => MacEvent::Key {
             code,
@@ -479,7 +487,14 @@ fn observe(
         CGEventType::FlagsChanged => MacEvent::FlagsChanged { code, held },
         _ => return CallbackResult::Keep,
     };
-    let decision = policy.observe(key_event, || shortcut_key_down(shortcut), Instant::now());
+    if let Some(swallow) = recording.observe(keyboard::Mac::recorded(key_event, flags)) {
+        return if swallow {
+            CallbackResult::Drop
+        } else {
+            CallbackResult::Keep
+        };
+    }
+    let decision = policy.observe(key_event, || shortcut_down(shortcut), Instant::now());
     decision.deliver(input);
     if keyboard::Mac::types(key_event, &decision) {
         typed.add();
@@ -576,17 +591,18 @@ fn modifiers_for(shortcut: MacShortcut) -> Modifiers {
     let mut held = shortcut.modifiers(
         cg::CGEventSource::flags_state(cg::CGEventSourceStateID::CombinedSessionState).0,
     );
-    // F13 sets no modifier flag, so its hold comes from the HID key state.
-    if shortcut == MacShortcut::F13 {
-        held.talk = shortcut_key_down(shortcut);
-    }
+    // A shortcut's key sets no modifier flag, so its hold comes from the HID key state.
+    held.talk = held.talk || shortcut.chord().code().is_some_and(key_down);
     held
 }
 
-fn shortcut_key_down(shortcut: MacShortcut) -> bool {
-    u16::try_from(shortcut.key_code()).is_ok_and(|code| {
-        cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
-    })
+/// Whether every key of the talk shortcut is physically down.
+fn shortcut_down(shortcut: MacShortcut) -> bool {
+    keyboard::Mac::chord_down(shortcut.chord(), key_down)
+}
+
+fn key_down(code: u16) -> bool {
+    cg::CGEventSource::key_state(cg::CGEventSourceStateID::HIDSystemState, code)
 }
 
 struct Insert {
@@ -616,7 +632,7 @@ impl insertion::NativeInsert for Insert {
             .into_iter()
             .map(|down| {
                 let event = own_key_event(&source, KeyCode::ANSI_V, down)
-                    .context("Cannot create paste event")?;
+                    .context("Can't create paste event")?;
                 event.set_flags(CGEventFlags::CGEventFlagCommand);
                 Ok(event)
             })
@@ -631,10 +647,10 @@ impl insertion::NativeInsert for Insert {
                 insertion::Typed::Text(run) => {
                     for chunk in insertion::utf16_chunks(run, TEXT_EVENT_UNITS) {
                         let press =
-                            own_key_event(&source, 0, true).context("Cannot create text event")?;
+                            own_key_event(&source, 0, true).context("Can't create text event")?;
                         press.set_string(chunk);
                         let release = own_key_event(&source, 0, false)
-                            .context("Cannot create text release")?;
+                            .context("Can't create text release")?;
                         events.extend([press, release]);
                     }
                 },
@@ -642,7 +658,7 @@ impl insertion::NativeInsert for Insert {
                 insertion::Typed::LineBreak => {
                     for down in [true, false] {
                         let event = own_key_event(&source, KeyCode::RETURN, down)
-                            .context("Cannot create line break event")?;
+                            .context("Can't create line break event")?;
                         event.set_flags(CGEventFlags::CGEventFlagShift);
                         events.push(event);
                     }
@@ -657,7 +673,7 @@ impl insertion::NativeInsert for Insert {
         [true, false]
             .into_iter()
             .map(|down| {
-                own_key_event(&source, KeyCode::RETURN, down).context("Cannot create Return event")
+                own_key_event(&source, KeyCode::RETURN, down).context("Can't create Return event")
             })
             .collect()
     }
@@ -708,7 +724,7 @@ impl insertion::NativeInsert for Insert {
 
 fn private_event_source() -> anyhow::Result<CGEventSource> {
     CGEventSource::new(CGEventSourceStateID::Private)
-        .map_err(|()| anyhow!("Cannot create keyboard event source"))
+        .map_err(|()| anyhow!("Can't create keyboard event source"))
 }
 
 fn own_key_event(source: &CGEventSource, code: CGKeyCode, down: bool) -> Option<CGEvent> {
@@ -728,6 +744,74 @@ pub(super) fn reduced_motion() -> bool {
 #[link(name = "Carbon", kind = "framework")]
 unsafe extern "C" {
     fn IsSecureEventInputEnabled() -> u8;
+    fn TISCopyCurrentKeyboardLayoutInputSource() -> *const c_void;
+    fn TISGetInputSourceProperty(source: *const c_void, key: CFStringRef) -> *const c_void;
+    #[link_name = "kTISPropertyUnicodeKeyLayoutData"]
+    static UNICODE_KEY_LAYOUT_DATA: CFStringRef;
+    fn LMGetKbdType() -> u8;
+    fn UCKeyTranslate(
+        layout: *const c_void,
+        code: u16,
+        action: u16,
+        modifiers: u32,
+        keyboard: u32,
+        options: u32,
+        dead_keys: *mut u32,
+        capacity: usize,
+        length: *mut usize,
+        text: *mut u16,
+    ) -> i32;
+}
+
+/// The character the current keyboard layout prints on the key with `CGKeyCode` `code`.
+///
+/// Text Input Sources answer only on the main thread; elsewhere this is `None`, and labels keep
+/// US positions.
+pub(crate) fn printed_key(code: u16) -> Option<char> {
+    /// `kUCKeyActionDisplay`: the key cap, not what a press types.
+    const DISPLAY: u16 = 3;
+    /// `1 << kUCKeyTranslateNoDeadKeysBit`: a dead key reports its own accent.
+    const NO_DEAD_KEYS: u32 = 1;
+    MainThreadMarker::new()?;
+    // SAFETY: on the main thread, as Text Input Sources require.
+    let source = NonNull::new(unsafe { TISCopyCurrentKeyboardLayoutInputSource() }.cast_mut())?;
+    // SAFETY: a Create-rule reference, adopted once.
+    let source = unsafe { CFType::wrap_under_create_rule(source.as_ptr().cast_const()) };
+    // SAFETY: a constant Carbon defines for the process's lifetime.
+    let property = unsafe { UNICODE_KEY_LAYOUT_DATA };
+    // SAFETY: a Get-rule reference that `source` keeps alive while it is read.
+    let data = unsafe { TISGetInputSourceProperty(source.as_CFTypeRef(), property) };
+    let data = NonNull::new(data.cast_mut())?;
+    // SAFETY: a Get-rule `CFData`, retained here for the read below.
+    let data = unsafe { CFData::wrap_under_get_rule(data.as_ptr().cast_const().cast()) };
+    // SAFETY: reads the hardware keyboard type and nothing else.
+    let keyboard = u32::from(unsafe { LMGetKbdType() });
+    let mut dead_keys = 0;
+    let mut text = [0_u16; 4];
+    let mut length = 0;
+    // SAFETY: the layout bytes live in `data`; `text` holds `text.len()` units, and `length`
+    // reports how many were written.
+    let status = unsafe {
+        UCKeyTranslate(
+            data.bytes().as_ptr().cast(),
+            code,
+            DISPLAY,
+            0,
+            keyboard,
+            NO_DEAD_KEYS,
+            &raw mut dead_keys,
+            text.len(),
+            &raw mut length,
+            text.as_mut_ptr(),
+        )
+    };
+    if status != 0 {
+        return None;
+    }
+    let mut characters = char::decode_utf16(text.get(..length)?.iter().copied());
+    let character = characters.next()?.ok()?;
+    (characters.next().is_none() && !character.is_control() && !character.is_whitespace())
+        .then_some(character)
 }
 
 fn secure_input_on() -> bool {

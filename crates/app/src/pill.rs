@@ -44,6 +44,8 @@ const EMPTY_FOR: Duration = Duration::from_millis(1200);
 const ERROR_FOR: Duration = Duration::from_secs(8);
 const LONGEST_FEEDBACK: Duration = ERROR_FOR;
 const DETAILS: &str = "Details in Settings";
+/// Where a Show that lost narration can be transcribed again.
+const SHOW_DETAILS: &str = "Details in Shows";
 
 const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
@@ -452,7 +454,11 @@ impl Scene {
     }
 
     fn footer(&self) -> Option<&'static str> {
-        (self.phase == Phase::Error || self.narration_lost.is_some()).then_some(DETAILS)
+        if self.narration_lost.is_some() {
+            Some(SHOW_DETAILS)
+        } else {
+            (self.phase == Phase::Error).then_some(DETAILS)
+        }
     }
 
     fn content(&self) -> Content {

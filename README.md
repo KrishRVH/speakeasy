@@ -6,7 +6,7 @@
   Speech runs on your machine, with no account, automatic upload, or dictation history.
 </p>
 
-[Get started](#get-started) · [Shows](#show-your-coding-agent) · [Linux](#linux-experimental) ·
+[Get started](#get-started) · [Shows](#shows-for-coding-agents) · [Linux](#linux-experimental) ·
 [Build and verify](#build-and-verify)
 
 <p align="center">
@@ -31,9 +31,9 @@ glibc 2.35 or newer.
 - **Linux.** See [Linux installation](#linux-experimental).
 
 The setup guide downloads Parakeet and its local engine, helps you grant permissions, and opens a
-private practice area. **Cancel** pauses a download and the next attempt resumes it. Use **General →
-Setup guide → Replay** to reopen the guide while keeping your settings. To try delivery, finish
-practice and dictate into an editor.
+private practice area. **Pause download** stops a download, and the next attempt resumes it. Use
+**General → Setup guide → Replay** to reopen the guide while keeping your settings. To try delivery,
+finish practice and dictate into an editor.
 
 <p align="center">
   <img src="docs/assets/setup.png" alt="The setup guide downloading the Parakeet model" width="460">
@@ -49,6 +49,7 @@ practice and dictate into an editor.
 | Finish and send with Return             | Enter during hold                   | Return during hold                  |                                |
 | Paste last dictation                    | V during hold or tray               | V during hold or tray               | Tray or `speakeasy paste-last` |
 | Show the screen, window, or area        | S, W, or A during hold              | S, W, or A during hold              |                                |
+| One-press hands-free or Show            | Record a shortcut in Settings       | Record a shortcut in Settings       |                                |
 
 Escape still reaches the focused app on Windows and macOS. The pill listens without taking focus,
 shows progress and errors, and counts down the last 30 seconds of the five-minute limit. If the
@@ -61,14 +62,17 @@ heard. It keeps one result in memory until Pause, a dictation restart, or Quit.
     width="760">
 </p>
 
-Choose **Right Ctrl** or **F13** on Windows, and **F13**, **Right Option**, or **Right Command** on
-Mac, when the default conflicts with another app or an external keyboard's Fn stays in firmware.
-With a right modifier, wait a quarter-second before adding a hold key so quick chords such as Right
-Ctrl+C still copy. For Mac Fn, set **System Settings → Keyboard → Press 🌐 key to** to **Do
-Nothing**; Settings and the pill say so when it opens a picker, switches input, or starts Dictation.
-When Secure Keyboard Entry is active, Mac modifier shortcuts still record, and F13 and the hold keys
-are unavailable to Speakeasy. The pill names the app that turned it on, often a terminal with Secure
-Keyboard Entry enabled in its menu.
+When the default conflicts with another app, or an external keyboard's Fn stays in firmware, choose
+another hold-to-talk shortcut in Settings: **Right Ctrl** or **F13** on Windows, **F13**, **Right
+Option**, or **Right Command** on Mac, or record any keys. Settings can also record shortcuts that
+start hands-free or a screen, window, or area Show with one press and finish it with the next. A
+shortcut needs a modifier unless its key types nothing, as F13 doesn't. With a single modifier, wait
+a quarter-second before adding a hold key so quick chords such as Right Ctrl+C still copy. For Mac
+Fn, set **System Settings → Keyboard → Press 🌐 key to** to **Do Nothing**; Settings and the pill
+say so when it opens a picker, switches input, or starts Dictation. When Secure Keyboard Entry is
+active, Mac modifier shortcuts still record, and shortcuts with a key, such as F13, and the hold
+keys are unavailable to Speakeasy. The pill names the app that turned it on, often a terminal with
+Secure Keyboard Entry enabled in its menu.
 
 By default, text is pasted. Windows and macOS restore the prior clipboard after half a second when
 they can copy it back and the clipboard is still unchanged. A paste followed by Return leaves the
@@ -90,10 +94,11 @@ settings and downloads while preserving Shows.
 
 A preset saves the speech and cleanup choices you use together. **Use** applies it to Settings. The
 Windows and Mac tray or `speakeasy preset "NAME"` applies a preset while idle for the current run
-without saving it. **Dictation style** in the tray or `speakeasy style STYLE` sets the next
-recording's style. Choose `prose`, `verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`.
-Verbatim preserves fillers. Phrase corrections apply in every style, and Prose can write spoken
-symbols such as “new line”, “underscore”, or “open paren”. Shows use their usual narration.
+without saving it; Settings tags it **This session** and offers **Keep using it**. **Dictation
+style** in the tray or `speakeasy style STYLE` sets the next recording's style. Choose `prose`,
+`verbatim`, `camel`, `pascal`, `snake`, `kebab`, or `constant`. Verbatim preserves fillers. Phrase
+corrections apply in every style, and Prose can write spoken symbols such as “new line”,
+“underscore”, or “open paren”. Shows use their usual narration.
 
 <p align="center">
   <img src="docs/assets/themes.png" alt="Settings in all four color themes" width="760">
@@ -127,7 +132,7 @@ Pass `--config PATH` for the selected instance. The JSON commands exit 0 for ack
 refusal, and 2 for unavailable or uncertain. Usage errors also exit 2 and print to stderr. Read
 status after an uncertain result. The start token applies to that ordinary dictation only.
 
-Enable **Scripts can read their dictations** under **Dictation → Writing** to use
+Enable **Let scripts receive dictations** under **Dictation → Writing** to use
 `speakeasy dictation start --print` followed by `speakeasy dictation stop TOKEN --print`. This
 capture delivers its result in the reply's `text` field instead of pasting. The stop command waits
 up to two minutes. The switch limits the feature to explicit script captures. Shows, practice, and
@@ -150,7 +155,7 @@ Recognition hints guide Nemotron and Whisper toward names and jargon. Correction
 words or phrases in the output and apply to Show narration too. **Remove um and uh** applies to
 English in Nemotron and Whisper. With Parakeet, turn it on to opt into English cleanup.
 
-## Show your coding agent
+## Shows for coding agents
 
 A Show records a screen, window, or area with your narration. On Windows and Mac, hold the dictation
 shortcut and press **S** for the display under the pointer, **W** for its window, or **A** to drag
@@ -174,7 +179,7 @@ Show that ends early can still save its footage and report missing or partial na
 
 ### Read saved Shows
 
-Open **Shows** to review keyframes, **All retained frames**, **Video** where available, and
+Open **Shows** to review keyframes, **Every saved frame**, **Video** where available, and
 **Summary** or **Narration**. A timed mark or clause jumps to its position. When the actual sample
 differs from the requested time, the caption shows both. Video annotations may end before recovered
 video does.
@@ -184,18 +189,19 @@ video does.
 </p>
 
 On Windows and Mac, **Send to agent** copies paths and the ID in a prompt you can paste into an
-agent. **Copy image + summary + narration** copies the displayed image with its time, your edited
+agent. **Copy image, summary, and narration** copies the displayed image with its time, your edited
 summary, and the recorded words. **Copy last Show** in the tray rereads the latest Show's summary,
 including edits, until you quit or the Show is removed. A Windows summary can include the path under
 the default WSL distribution's drive mount.
 
-Managed Shows and their saved voice expire seven days after recording unless you choose **Keep
-Show**. **Allow expiry** restores the original expiry date. **Delete Show…** removes the selected
-bundle after confirmation, with exported copies and any pending recovery audio left in place.
+Managed Shows and their saved audio expire seven days after recording unless you choose **Keep
+Show**. **Stop keeping** restores the original expiry date, so a Show already past it goes at the
+next cleanup. **Delete Show…** removes the selected bundle after confirmation, with exported copies
+and any pending recovery audio left in place.
 
-- **Export ZIP…** writes a portable copy of the evidence and edited summary. Saved voice and
+- **Export ZIP…** writes a portable copy of the evidence and edited summary. Saved audio and
   recovery audio stay in Speakeasy.
-- **Export video…** writes a new MP4 with saved ink, voice, and optional captions where available.
+- **Export video…** writes a new MP4 with saved ink, audio, and optional captions where available.
   Install FFmpeg 5.1 or later with H.264 and AAC support, put `ffmpeg` on PATH, then restart
   Speakeasy.
 - **Recover Show** restores surviving footage and audio from an interrupted recording as a new

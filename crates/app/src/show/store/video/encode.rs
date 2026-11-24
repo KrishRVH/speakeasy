@@ -91,7 +91,7 @@ pub(super) async fn run(
             "pipe:1",
         ])
         .stdout(Stdio::piped());
-    let mut decoder = decode.spawn().context("Cannot start FFmpeg. Install FFmpeg 5.1 or newer with H.264 and AAC support, make ffmpeg available on PATH, then restart Speakeasy")?;
+    let mut decoder = decode.spawn().context("Can't start FFmpeg. Install FFmpeg 5.1 or newer with H.264 and AAC support, make ffmpeg available on PATH, then restart Speakeasy")?;
     let mut command = hidden_command(&program);
     command
         .args([
@@ -144,7 +144,7 @@ pub(super) async fn run(
         Ok(child) => child,
         Err(error) => {
             kill_and_reap(&mut decoder).await;
-            return Err(error).context("Cannot start the FFmpeg video encoder");
+            return Err(error).context("Can't start the FFmpeg video encoder");
         },
     };
     let result = tokio::select! {

@@ -115,7 +115,7 @@ impl Settings {
         };
         match step {
             Step::Prepare if self.resetting() => ("Starting over…", None),
-            Step::Prepare if self.unreadable => ("Continue", None),
+            Step::Prepare if self.unreadable.is_some() => ("Continue", None),
             Step::Prepare if self.engine_work.installing().is_some() => ("Setting up…", None),
             Step::Prepare if self.engine_work.is_pausing() => ("Pausing download…", None),
             Step::Prepare | Step::Practice if self.saving.is_some() => ("Saving…", None),
@@ -124,7 +124,7 @@ impl Settings {
                 (!self.engine_work.is_busy()).then_some(SettingsAction::Setup),
             ),
             Step::Permissions | Step::Practice if !running => {
-                ("Retry dictation", Some(SettingsAction::Resume))
+                ("Resume dictation", Some(SettingsAction::Resume))
             },
             Step::Practice if !self.practice.recognized() && self.practice.live.is_none() => (
                 if demo {
@@ -179,7 +179,7 @@ impl Settings {
         self.practice.stop();
         if !is_demo(cx) && complete(&cx.global::<Services>().path).is_err() {
             self.notice = Some(Notice::Problem(
-                "Cannot remember setup completion. Check that the settings folder is writable, then try again.".into(),
+                "Speakeasy can't save that setup is finished. Check that its settings folder is writable, then try again.".into(),
             ));
             return;
         }

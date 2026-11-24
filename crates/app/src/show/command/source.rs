@@ -284,7 +284,7 @@ fn crop_mark(manifest: &Manifest, number: Option<usize>) -> anyhow::Result<Optio
 fn export(destination: &Path, image: &speakeasy_show::Image) -> anyhow::Result<PathBuf> {
     let destination = std::path::absolute(destination)?;
     source::export(&destination, &image.encode_png()?)
-        .context("Cannot create the export; choose a new writable PNG path")?;
+        .context("Can't create the export; choose a new writable PNG path")?;
     Ok(destination)
 }
 

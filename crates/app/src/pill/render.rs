@@ -9,7 +9,7 @@ use super::{
     SHADOW_ROOM, Scene, grille::Grille,
 };
 use crate::{
-    controls::{caps, facet, hollow, icon},
+    controls::{facet, hollow, icon},
     icons,
     theme::{Palette, alpha},
 };
@@ -22,9 +22,9 @@ const LABEL_FADE_FROM: f32 = 0.6;
 const JEWEL: f32 = 14.0;
 
 const TRAY_HINT: &str = if cfg!(target_os = "macos") {
-    "In the menu bar · Use Speakeasy's menu to quit"
+    "Still running in the menu bar; quit from its menu."
 } else {
-    "In the tray · Use Speakeasy's menu to quit"
+    "Still running in the tray; quit from its menu."
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
 /// Keeps a note clear of the capsule's rounded ends.
@@ -223,10 +223,10 @@ impl Pill {
 fn note_line(note: &Note, opened: f32, palette: &Palette) -> Div {
     let text: SharedString = match note {
         Note::GlobeKey(GlobeKey::Emoji) => {
-            "Fn also opens Emoji & Symbols; see Settings to stop it".into()
+            "Fn also opens Emoji & Symbols; see Speakeasy Settings".into()
         },
         Note::GlobeKey(GlobeKey::InputSource) => {
-            "Fn also switches the input source; see Settings to stop it".into()
+            "Fn also switches the input source; see Speakeasy Settings".into()
         },
         Note::GlobeKey(GlobeKey::Dictation) => {
             "Double-tapping Fn also starts macOS Dictation; see Settings".into()
@@ -291,11 +291,12 @@ fn message_row(
                 .child(div().line_clamp(2).text_ellipsis().pr(px(6.0)).child(text))
                 .when_some(footer, |message, footer| {
                     message.child(
-                        caps(footer)
+                        div()
                             .mt(px(3.0))
-                            .text_size(px(9.5))
-                            .line_height(px(12.5))
-                            .text_color(rgb(palette.muted)),
+                            .text_size(px(10.5))
+                            .line_height(px(13.0))
+                            .text_color(rgb(palette.muted))
+                            .child(footer),
                     )
                 }),
         )

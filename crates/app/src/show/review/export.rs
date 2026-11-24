@@ -47,7 +47,7 @@ impl Review {
                     Ok(Some(destination)) => view.export_to(directory, destination, kind, cx),
                     Ok(None) => {},
                     Err(_) => view.notice = Some(
-                        "Cannot open the export dialog. Try again, or use speakeasy show export."
+                        "Can't open the export dialog. Try again, or use speakeasy show export."
                             .into(),
                     ),
                 }
@@ -98,7 +98,7 @@ impl Review {
             },
         };
         if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
-            self.notice = Some(format!("Cannot export this Show: {error:#}"));
+            self.notice = Some(format!("Can't export this Show: {error:#}"));
             return;
         }
         self.notice = Some(
@@ -116,8 +116,7 @@ impl Review {
                 view.export = None;
                 if view.library.is_selected(&directory) {
                     view.notice = Some(
-                        result
-                            .unwrap_or_else(|error| format!("Cannot export this Show: {error:#}")),
+                        result.unwrap_or_else(|error| format!("Can't export this Show: {error:#}")),
                     );
                 }
                 cx.notify();

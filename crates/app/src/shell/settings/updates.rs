@@ -101,7 +101,7 @@ impl Settings {
         }
         let Ok(operation) = Check::start() else {
             self.notice = Some(Notice::Problem(
-                "Cannot start the update check. Try again.".into(),
+                "Can't start the update check. Try again.".into(),
             ));
             return;
         };
@@ -204,7 +204,7 @@ impl Settings {
             version,
             cancelled: false,
         };
-        self.notice = Some(Notice::Note("Authenticating update…".into()));
+        self.notice = Some(Notice::Note("Checking the update's signature…".into()));
     }
 
     #[cfg(target_os = "windows")]
@@ -261,15 +261,9 @@ impl Settings {
 }
 
 fn update_notice(version: Option<Version>) -> Notice {
-    let action = "Release notes";
-    #[cfg(target_os = "windows")]
-    let action = if crate::updates::Download::available() {
-        "Download"
-    } else {
-        action
-    };
+    // The button beside the notice names what to do next.
     let message = match version {
-        Some(version) => format!("Speakeasy {version} is available. Choose {action}."),
+        Some(version) => format!("Speakeasy {version} is available."),
         None => "Speakeasy is up to date.".into(),
     };
     Notice::Note(message.into())

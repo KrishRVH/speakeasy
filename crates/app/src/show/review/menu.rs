@@ -90,7 +90,7 @@ impl Review {
         [
             (!cfg!(target_os = "linux")).then(|| Item {
                 action: Action::Copy(CopyKind::Evidence),
-                label: "Copy image + summary + narration",
+                label: "Copy image, summary, and narration",
                 enabled: self.can_copy(cx)
                     && self.loading.is_none()
                     && matches!(self.image, ImageState::Ready(_)),

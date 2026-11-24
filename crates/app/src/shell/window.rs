@@ -27,7 +27,7 @@ pub(crate) fn reveal(cx: &mut App) {
     }
     if let Err(error) = open(cx) {
         cx.global::<Services>()
-            .report(&anyhow!("Cannot open Settings: {error:#}"));
+            .report(&anyhow!("Can't open Settings: {error:#}"));
     }
 }
 
@@ -80,7 +80,7 @@ pub(crate) fn reveal_shows(cx: &mut App) {
         Ok(shows) => cx.global_mut::<Services>().shows = Some(shows),
         Err(error) => cx
             .global::<Services>()
-            .report(&anyhow!("Cannot open Shows: {error:#}")),
+            .report(&anyhow!("Can't open Shows: {error:#}")),
     }
 }
 
@@ -163,7 +163,7 @@ fn settle_pill(step: impl FnOnce(PillSurface) -> PillSurface, cx: &mut App) {
                 if let Err(error) = reopen_pill(cx) {
                     cx.global_mut::<PillPresence>().surface = PillSurface::Lost;
                     cx.global::<Services>()
-                        .report(&anyhow!("Cannot reopen the pill: {error:#}"));
+                        .report(&anyhow!("Can't reopen the pill: {error:#}"));
                 }
             });
         })

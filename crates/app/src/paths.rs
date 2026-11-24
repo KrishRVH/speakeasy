@@ -11,7 +11,7 @@ pub(crate) fn settings_file(chosen: Option<PathBuf>) -> anyhow::Result<PathBuf> 
         Some(file) => file,
         None => user_folder(UserFolder::Settings)?.join("settings.json"),
     };
-    std::path::absolute(file).context("Cannot resolve the settings file from the current folder")
+    std::path::absolute(file).context("Can't resolve the settings file from the current folder")
 }
 
 pub(crate) fn settings_argument(argument: Option<OsString>) -> anyhow::Result<PathBuf> {
@@ -112,9 +112,7 @@ fn user_folder(folder: UserFolder) -> anyhow::Result<PathBuf> {
         UserFolder::Data => "data",
     };
     let base = base.with_context(|| {
-        format!(
-            "Cannot find your {kind} folder because {required} is unset or not an absolute path"
-        )
+        format!("Can't find your {kind} folder because {required} is unset or not an absolute path")
     })?;
     Ok(base.join("speakeasy"))
 }

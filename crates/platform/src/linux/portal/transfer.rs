@@ -72,7 +72,7 @@ fn set_nonblocking(fd: BorrowedFd<'_>) -> anyhow::Result<()> {
         }
     };
     if result < 0 {
-        return Err(io::Error::last_os_error()).context("Cannot prepare clipboard transfer");
+        return Err(io::Error::last_os_error()).context("Can't prepare clipboard transfer");
     }
     Ok(())
 }

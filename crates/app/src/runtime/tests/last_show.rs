@@ -27,8 +27,8 @@ async fn a_show_saved_but_not_copied_is_remembered_and_says_how_to_copy_it() -> 
     assert_eq!(snapshot.last_show, Some(saved("look")));
     assert_eq!(
         snapshot.message,
-        "The Show was saved but not copied (Another app holds the clipboard). Choose Copy last \
-         Show in Speakeasy's menu."
+        "The Show was saved but not copied. Choose Copy last Show in Speakeasy's menu. Another app \
+         holds the clipboard."
     );
     h.close().await
 }

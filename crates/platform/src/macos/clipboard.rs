@@ -11,7 +11,7 @@ use crate::clipboard;
 /// Asks clipboard managers not to record or show an item; the item still pastes.
 const TRANSIENT_TYPE: &str = "org.nspasteboard.TransientType";
 
-const INCOMPLETE: &str = "Cannot place the complete copy on the clipboard";
+const INCOMPLETE: &str = "Can't place the complete copy on the clipboard";
 
 pub(super) type Saved = Vec<Vec<(Retained<NSString>, Retained<NSData>)>>;
 
@@ -86,7 +86,7 @@ fn items_from(saved: &Saved) -> anyhow::Result<Vec<Retained<NSPasteboardItem>>> 
             for (kind, data) in kept {
                 ensure!(
                     item.setData_forType(data, kind),
-                    "Cannot prepare the previous clipboard"
+                    "Can't prepare the previous clipboard"
                 );
             }
             Ok(item)
@@ -98,7 +98,7 @@ fn private_item() -> anyhow::Result<Retained<NSPasteboardItem>> {
     let item = NSPasteboardItem::new();
     ensure!(
         item.setString_forType(ns_string!(""), &NSString::from_str(TRANSIENT_TYPE)),
-        "Cannot mark the clipboard copy private"
+        "Can't mark the clipboard copy private"
     );
     Ok(item)
 }
@@ -112,14 +112,14 @@ fn item(
         let png = unsafe { NSPasteboardTypePNG };
         ensure!(
             item.setData_forType(&NSData::with_bytes(&image.png), png),
-            "Cannot prepare the clipboard image"
+            "Can't prepare the clipboard image"
         );
     }
 
     let string = unsafe { NSPasteboardTypeString };
     ensure!(
         item.setString_forType(&NSString::from_str(text), string),
-        "Cannot prepare the clipboard text"
+        "Can't prepare the clipboard text"
     );
     Ok(item)
 }

@@ -21,7 +21,7 @@ use std::{mem, ops::ControlFlow};
 
 use self::session::{Purpose, Session};
 pub use self::{
-    outcome::{Failure, Notice, Outcome, Refusal},
+    outcome::{Failure, Notice, Outcome, Refusal, Trouble},
     recognition::{Detail, Part, Partition, Request, Ticket, Transcript},
     session::{Enter, Handoff, Kept, Origin, Publication, Recognized, Release, Reopened, Sealed},
 };
@@ -423,6 +423,7 @@ pub enum Input<P: Payload> {
     PasteLast,
     Submit,
     StartShow(P::Scope),
+    ToggleShow(P::Scope),
     Unavailable(P::Text),
     DesktopReady,
 }
@@ -858,7 +859,9 @@ impl<P: Payload> Machine<P> {
                 self.paste_last(now, env)?;
                 None
             },
-            Input::StartShow(scope) if ready && self.gesture.state() == State::Idle => {
+            Input::StartShow(scope) | Input::ToggleShow(scope)
+                if ready && self.gesture.state() == State::Idle =>
+            {
                 self.end_practice(env);
                 let start = self.gesture.toggle(now.moment);
                 self.handle_action(now, start, env)?;
@@ -867,7 +870,22 @@ impl<P: Payload> Machine<P> {
                 }
                 None
             },
-            Input::Press | Input::Toggle | Input::PasteLast | Input::StartShow(_) => None,
+            // A Show shortcut pressed again finishes the Show, whichever scope it names.
+            Input::ToggleShow(_)
+                if ready && self.session.as_ref().is_some_and(Session::is_show) =>
+            {
+                self.gesture.toggle(now.moment)
+            },
+            // During dictation it turns the recording into a Show, as S does during a hold.
+            Input::ToggleShow(scope) if ready => {
+                self.start_show(scope, env);
+                None
+            },
+            Input::Press
+            | Input::Toggle
+            | Input::PasteLast
+            | Input::StartShow(_)
+            | Input::ToggleShow(_) => None,
             Input::Release => self.gesture.release(now.moment),
             Input::Lock => {
                 self.gesture.lock();
@@ -901,7 +919,9 @@ impl<P: Payload> Machine<P> {
                 },
                 finish => finish,
             },
-            Input::Unavailable(text) => return self.stop_with_failure(Failure::Said(text), env),
+            Input::Unavailable(text) => {
+                return self.stop_with_failure(Failure::Said(Trouble::Shortcut, text), env);
+            },
             Input::DesktopReady => {
                 self.desktop_ready = true;
                 None
@@ -927,7 +947,9 @@ impl<P: Payload> Machine<P> {
             env.announce();
         }
         self.outcome = match report {
-            Report::Failed(text) | Report::Recurring(text) => Outcome::Failed(Failure::Said(text)),
+            Report::Failed(text) | Report::Recurring(text) => {
+                Outcome::Failed(Failure::Said(Trouble::Other, text))
+            },
             Report::ShowCopied => {
                 self.cue(Cue::Copied, env);
                 Outcome::ShowCopied(P::Saved::default())
@@ -1013,7 +1035,7 @@ impl<P: Payload> Machine<P> {
                     self.notice = Some(Notice::NarrationLost(unheard.text));
                     self.conclude_capture(env);
                 } else {
-                    self.fail(Failure::Said(unheard.text), env);
+                    self.fail(Failure::Said(Trouble::Microphone, unheard.text), env);
                 }
             },
             Capture::Lost(sealed, lost) if session.is_listening() && !session.is_practice() => {
@@ -1023,7 +1045,9 @@ impl<P: Payload> Machine<P> {
                 session.lost_microphone(sealed, lost);
                 self.conclude_capture(env);
             },
-            Capture::Lost(_, lost) => self.fail(Failure::Said(lost.failure), env),
+            Capture::Lost(_, lost) => {
+                self.fail(Failure::Said(Trouble::Microphone, lost.failure), env);
+            },
         }
     }
 
@@ -1063,7 +1087,7 @@ impl<P: Payload> Machine<P> {
                 {
                     self.notice = Some(Notice::WarmupFailed(text));
                 } else {
-                    self.fail(Failure::Said(text), env);
+                    self.fail(Failure::Said(Trouble::Transcription, text), env);
                 }
             },
             Completion::Transcribed(ticket, Ok(transcript)) => {
@@ -1094,7 +1118,7 @@ impl<P: Payload> Machine<P> {
                     if session.go_on_without_transcript() {
                         self.notice = Some(Notice::NarrationLost(text));
                     } else {
-                        self.fail(Failure::Said(text), env);
+                        self.fail(Failure::Said(Trouble::Transcription, text), env);
                     }
                 }
             },
@@ -1118,7 +1142,7 @@ impl<P: Payload> Machine<P> {
         let lost = session.take_lost();
         let Some(text) = env.compose(heard, session.style, &self.config) else {
             let outcome = lost.map_or(Outcome::Empty, |lost| {
-                Outcome::Failed(Failure::Said(lost.failure))
+                Outcome::Failed(Failure::Said(Trouble::Microphone, lost.failure))
             });
             self.end_session(outcome, env);
             return;
@@ -1142,7 +1166,10 @@ impl<P: Payload> Machine<P> {
     }
 
     fn start_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
-        let held = matches!(self.gesture.state(), State::Held | State::HandsFree);
+        let held = matches!(
+            self.gesture.state(),
+            State::Held | State::PendingTap | State::HandsFree
+        );
         let Some(session) = self.session.as_mut() else {
             return false;
         };
@@ -1194,7 +1221,7 @@ impl<P: Payload> Machine<P> {
                 if !stopped.unwound {
                     session.forfeit();
                 }
-                self.fail(Failure::Said(stopped.text), env);
+                self.fail(Failure::Said(Trouble::Screen, stopped.text), env);
                 None
             },
             Screening::Unchosen(unchosen) => {
@@ -1257,9 +1284,12 @@ impl<P: Payload> Machine<P> {
                 self.remember(shown, self.latest.id, env);
                 Outcome::Recovered(recovered)
             },
-            Delivered::Abandoned(Err(text))
-            | Delivered::Published(Published::Failed(text))
-            | Delivered::Reopened(Err(text)) => Outcome::Failed(Failure::Said(text)),
+            Delivered::Published(Published::Failed(text)) => {
+                Outcome::Failed(Failure::Said(Trouble::Show, text))
+            },
+            Delivered::Abandoned(Err(text)) | Delivered::Reopened(Err(text)) => {
+                Outcome::Failed(Failure::Said(Trouble::Other, text))
+            },
             Delivered::Panicked if show => Outcome::Failed(Failure::PublishStopped),
             Delivered::Inserted(Inserted::Failed) | Delivered::Panicked => {
                 Outcome::Failed(Failure::Undelivered(None))
@@ -1601,7 +1631,7 @@ impl<P: Payload> Machine<P> {
                 session.opened();
                 self.open(Recorder::Microphone, env);
             },
-            Err(text) => self.fail(Failure::Said(text), env),
+            Err(text) => self.fail(Failure::Said(Trouble::Microphone, text), env),
         }
     }
 
@@ -1623,7 +1653,7 @@ impl<P: Payload> Machine<P> {
             },
             Err(text) => {
                 session.forfeit();
-                self.fail(Failure::Said(text), env);
+                self.fail(Failure::Said(Trouble::Screen, text), env);
             },
         }
     }

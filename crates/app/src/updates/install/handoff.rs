@@ -84,7 +84,7 @@ impl Installer {
         command.arg(directory).arg(configuration);
         let child = command
             .spawn()
-            .context("Cannot start the verified installer. Reopen Speakeasy and try again.")?;
+            .context("Can't start the verified installer. Reopen Speakeasy and try again.")?;
         #[expect(
             clippy::let_underscore_must_use,
             reason = "The installer owns the staged bytes after handoff; the next update clears the cache"

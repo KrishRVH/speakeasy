@@ -121,7 +121,7 @@ impl Checkpoint {
             Ok(None) => return Ok(false),
             Ok(Some(reading)) => {
                 let metadata = movie::retain(staged.staging.path(), reading, annotations)
-                    .context("Cannot save the recorded video")?;
+                    .context("Can't save the recorded video")?;
                 (metadata.note(&staged.directory.join(movie::FILE))?, false)
             },
             Err(_) => (VIDEO_LOST.to_owned(), true),
@@ -182,7 +182,7 @@ impl Checkpoint {
         } = self;
         drop(lock);
         fs::remove_dir_all(&directory)
-            .context("Cannot remove the interrupted Show; close files open in its folder")
+            .context("Can't remove the interrupted Show; close files open in its folder")
     }
 }
 
@@ -213,7 +213,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     }
     if let Some((directory, error)) = stuck {
         anyhow::bail!(
-            "Cannot delete the expired interrupted Show {}: {error:#}. Speakeasy tries again \
+            "Can't delete the expired interrupted Show {}: {error:#}. Speakeasy tries again \
              within the hour.",
             directory.display()
         );

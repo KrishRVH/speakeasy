@@ -61,7 +61,7 @@ click-through.
 | Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too.                                                                                 |
 | Stopped early    | A quiet notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.                                                                                          |
 | Nothing chosen   | A quiet notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                                                                                                         |
-| Narration lost   | The same notice saying what narration the copied Show lacks, why, and how it ended, above “Details in Settings”.                                                                                   |
+| Narration lost   | The same notice saying what narration the copied Show lacks, why, and how it ended, above “Details in Shows”.                                                                                      |
 | Text copied      | A quiet notice of up to two lines saying how to paste the copied text, for six seconds.                                                                                                            |
 | Microphone lost  | A quiet notice naming what stopped the microphone and how to paste the words it kept, for six seconds.                                                                                             |
 | Show gone        | A quiet notice saying the last Show has expired or was deleted, for six seconds.                                                                                                                   |
@@ -112,8 +112,11 @@ it can hear an opening or Show cue, so hearing only the cue does not qualify as 
 Settings has three pages with a shared footer for status and app actions. Dictation leads with the
 shortcut and private practice, followed by speech, writing, and presets. Words keeps corrections and
 hints together. General holds app-wide choices, platform settings, and actions such as reset.
-Settings reports the actual error and a remedy after the pill fades. Preset rows keep their identity
-as their Use, Update, or Delete actions change.
+Settings reports the actual error and a remedy after the pill fades, and the tray status names what
+failed, such as “Microphone unavailable”. Preset rows keep their identity as their Use, Update, or
+Delete actions change. Delete acts at once and offers Undo until the next preset edit. A preset
+chosen from the tray lasts until Speakeasy quits: Settings tags it “This session” and offers to keep
+it.
 
 Windows and Mac use the same tray menu policy. The Mac icon uses its badge rather than color to show
 recording. Settings close hides its existing window and leaves saves and setup running. Relaunch
@@ -130,32 +133,51 @@ by refresh or a new selection.
 
 Summary is the user's editable file, and Narration is the recorded speech. Switching between them
 keeps summary edits. Timed marks and clauses carry a requested time, and the caption names the
-actual displayed sample. Switching frame modes keeps the request. Manual navigation or a new
+actual displayed frame. Switching frame modes keeps the request. Manual navigation or a new
 selection clears it. Use the [Show guide](../README.md#read-saved-shows) for review actions.
 
 ## Interaction contracts
 
-- Hold the selected Windows or Mac shortcut to dictate; release to finish. Windows defaults to
-  Ctrl+Win and also offers Right Ctrl and F13; Mac defaults to Fn and also offers F13, Right Option,
-  and Right Command, both including during setup practice. The shortcut card explains firmware-only
-  Fn keys, mapping a spare key to F13, and the quick-combination rule. With Fn selected, the card
-  warns, and the pill notes as each recording opens, when macOS also acts on Fn presses (“Press 🌐
-  key to”), which can open a picker that catches the paste; a Globe key event Fn sends beside its
-  flag change is part of the Fn press, never another key. With a right modifier, a hold key pressed
-  within 250 ms of it interrupts and reaches the app, so Right Ctrl+C still copies; pressed when
-  another modifier is already down, the right modifier does not dictate. Adding Space during the
-  hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A short
-  single tap finishes after its tap window.
+- Hold the Windows or Mac hold-to-talk shortcut to dictate; release to finish. Windows defaults to
+  Ctrl+Win and offers Right Ctrl and F13; Mac defaults to Fn and offers F13, Right Option, and Right
+  Command; both record any other keys, including during setup practice. A shortcut is modifiers held
+  together with at most one other key. A lone modifier keeps its side, so Right Option leaves Left
+  Option to apps; any other shortcut matches either side. Settings refuses keys that type alone or
+  with only Shift (on Mac, with Shift and Option), Windows character keys with Ctrl+Alt, which AltGr
+  sends, Esc, Caps Lock, Num Lock, Shift alone, keys another shortcut has, and keys whose modifiers
+  would start hold to talk first, and says why on the row; a settings file holding such a shortcut
+  does not load. Character keys are labeled with what the current keyboard layout prints. The
+  shortcut card explains firmware-only Fn keys, mapping a spare key to F13, and the
+  quick-combination rule. With Fn selected, the card warns, and the pill notes as each recording
+  opens, when macOS also acts on Fn presses (“Press 🌐 key to”), which can open a picker that
+  catches the paste; a Globe key event Fn sends beside its flag change is part of the Fn press,
+  never another key. With a lone modifier other than Fn, a hold key pressed within 250 ms of it
+  interrupts and reaches the app, so Right Ctrl+C still copies; pressed when another modifier is
+  already down, the modifier does not dictate. Adding Space during the hold, or double-tapping,
+  switches to hands-free; press the shortcut again to finish. A short single tap finishes after its
+  tap window.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
-- On Windows/macOS, the shortcut's modifiers are observed, never swallowed. A selected F13 is
-  reserved: its presses, repeats, and releases are withheld, and repeats cannot start a recording.
-  Apart from F13, only the Space that locks hands-free, Return that sends, V that pastes the last
-  dictation, and S, W, or A that starts a Show are withheld from the focused app. Shift stays
-  passive so a Show can draw and pin with it, and another app's double Shift still works; any other
-  key during a hold belongs to a different shortcut, so it interrupts the recording, and the
-  shortcut waits for release. With Ctrl+Win, an unassigned mask key keeps the released Win key from
-  opening Start.
+- Settings can record optional shortcuts for hands-free and for screen, window, and area Shows. Each
+  needs a key besides modifiers and matches only its exact modifiers; macOS's Fn flag on function
+  and arrow keys does not count. Its press acts once, and the key is withheld from the focused app
+  through its release. The hands-free shortcut starts or finishes dictation as a double-tap does,
+  and during a hold or the wait for a second tap it locks hands-free. A Show shortcut starts its
+  Show between sessions, finishes any Show under way, and during dictation, the wait after one tap
+  included, turns it into its Show as S, W, or A would; a tray Show leaves dictation alone.
+- Recording a shortcut takes the next keys pressed, while dictation runs and no session is under
+  way. Modifiers still reach apps; the first other key ends the recording and is withheld through
+  its release, and Esc alone cancels it. Choosing anything else in Settings, or switching away from
+  it, stops the recording.
+- On Windows/macOS, the talk shortcut's modifiers are observed, never swallowed. Its key, if it has
+  one, is withheld from the press that completes the shortcut through its release, and a key alone,
+  such as F13, is reserved: its presses, repeats, and releases are withheld, and repeats cannot
+  start a recording. Apart from those keys, only the Space that locks hands-free, Return that sends,
+  V that pastes the last dictation, and S, W, or A that starts a Show are withheld from the focused
+  app. Shift stays passive so a Show can draw and pin with it, and another app's double Shift still
+  works; any other key during a hold belongs to a different shortcut, so it interrupts the
+  recording, and the shortcut waits for release. When a shortcut acts while Win or Alt is held, an
+  unassigned mask key keeps the released key from opening Start or a menu bar.
 - Return (or keypad Enter on macOS) during a Windows/macOS hold finishes that dictation as a release
   would and marks it to send. Delivery waits up to 5 s for the shortcut's release, then pastes or
   types the text, waits 100 ms for the app to take it, and presses Return once, rechecking that the

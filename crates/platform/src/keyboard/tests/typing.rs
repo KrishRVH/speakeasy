@@ -41,7 +41,7 @@ fn the_shortcut_and_its_hold_keys_never_count_as_typing() {
         );
     }
 
-    let mut f13 = Windows::new(WindowsShortcut::F13);
+    let mut f13 = Windows::new(only(WindowsShortcut::F13));
     assert!(!types(
         &mut f13,
         F13,
@@ -76,7 +76,7 @@ fn mac_hold_keys_and_the_f13_shortcut_never_count_as_typing() {
         assert!(!Mac::types(event, &decision), "{code} during a hold");
     }
 
-    let mut f13 = Mac::new(MacShortcut::F13);
+    let mut f13 = Mac::new(only(MacShortcut::F13));
     for repeat in [false, true] {
         let event = MacEvent::Key {
             code: MAC_F13,

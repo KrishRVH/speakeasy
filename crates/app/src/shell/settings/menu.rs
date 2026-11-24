@@ -200,40 +200,33 @@ impl Settings {
                 )
             }))
             .collect(),
-            #[cfg(target_os = "macos")]
+            #[cfg(not(target_os = "linux"))]
             Menu::Shortcut => {
-                use speakeasy_platform::MacShortcut;
-                [
-                    MacShortcut::Function,
-                    MacShortcut::RightOption,
-                    MacShortcut::RightCommand,
-                    MacShortcut::F13,
-                ]
-                .map(|shortcut| {
-                    Item::choice(
-                        shortcut.label(),
-                        Action::SelectShortcut(shortcut),
-                        self.config.mac_shortcut == shortcut,
-                    )
-                })
-                .into()
-            },
-            #[cfg(target_os = "windows")]
-            Menu::Shortcut => {
-                use speakeasy_platform::WindowsShortcut;
-                [
-                    WindowsShortcut::ControlWindows,
-                    WindowsShortcut::RightControl,
-                    WindowsShortcut::F13,
-                ]
-                .map(|shortcut| {
-                    Item::choice(
-                        shortcut.label(),
-                        Action::SelectShortcut(shortcut),
-                        self.config.windows_shortcut == shortcut,
-                    )
-                })
-                .into()
+                use super::shortcuts::{Edit, PRESETS};
+                let talk = self.config.shortcuts().talk;
+                // A recorded shortcut stays listed, so the menu shows what holds now.
+                let recorded = (!PRESETS.contains(&talk)).then_some(talk);
+                let record = Action::Shortcut(Edit::Record(speakeasy_platform::Binding::Talk));
+                recorded
+                    .into_iter()
+                    .chain(PRESETS.iter().copied())
+                    .map(|shortcut| {
+                        Item::choice(
+                            shortcut.label(),
+                            Action::Shortcut(Edit::Preset(shortcut)),
+                            talk == shortcut,
+                        )
+                    })
+                    .chain([Item {
+                        label: "Record a shortcut…".into(),
+                        action: record,
+                        kind: if self.can_record_shortcut() {
+                            Kind::Command { destructive: false }
+                        } else {
+                            Kind::Unavailable
+                        },
+                    }])
+                    .collect()
             },
             #[cfg(target_os = "linux")]
             Menu::Delivery => {

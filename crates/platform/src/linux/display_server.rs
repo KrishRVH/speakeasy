@@ -54,13 +54,13 @@ fn offers_layer_shell(display: OsString, runtime: Option<OsString>) -> anyhow::R
         display
     } else {
         PathBuf::from(runtime.context(
-            "Cannot find the Wayland display because XDG_RUNTIME_DIR is unset. Start Speakeasy from your desktop session.",
+            "Can't find the Wayland display because XDG_RUNTIME_DIR is unset. Start Speakeasy from your desktop session.",
         )?)
         .join(display)
     };
     let unreachable = || {
         format!(
-            "Cannot connect to the Wayland display at {}. Start Speakeasy from your desktop session",
+            "Can't connect to the Wayland display at {}. Start Speakeasy from your desktop session",
             socket.display()
         )
     };

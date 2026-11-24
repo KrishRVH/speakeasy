@@ -78,7 +78,7 @@ impl Metadata {
         );
         let mut identity = [0; 16];
         getrandom::fill(&mut identity)
-            .map_err(|_unavailable| anyhow::anyhow!("Cannot create a private movie identifier"))?;
+            .map_err(|_unavailable| anyhow::anyhow!("Can't create a private movie identifier"))?;
         let geometry = geometry::Writing::create(directory, identity, size)?;
         let metadata = Self {
             version: VERSION,

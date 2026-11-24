@@ -273,11 +273,8 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
             .frames
             .get(index)
             .context("Narration selected a missing frame")?;
-        assert!(
-            request
-                .caption(frame, frame.presentation)
-                .contains("retained sample")
-        );
+        let caption = request.caption(frame, frame.presentation);
+        assert!(caption.contains("frame #") && !caption.contains("keyframe"));
         view.copy(CopyKind::Evidence, cx);
         assert!(
             view.copying.is_none(),

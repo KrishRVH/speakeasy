@@ -33,7 +33,7 @@ recording.
 
 - **No pill:** confirm that dictation is enabled and the remote client forwards your dictation
   shortcut to the host. Many clients send Windows-key combinations only in full screen; check the
-  client's keyboard setting, or choose Right Ctrl or F13 in Settings.
+  client's keyboard setting, or choose another shortcut, such as Right Ctrl or F13, in Settings.
 - **Pill without a level:** check the sender, receiver, mixer route, and selected recording device
   in that order. Check host microphone permissions as well.
 - **Level follows desktop sound:** separate playback from the microphone bus.

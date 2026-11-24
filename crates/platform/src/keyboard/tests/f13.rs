@@ -5,7 +5,7 @@ fn f13_autorepeat_preserves_shift_taps_during_a_show() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
     for repeats in [false, true] {
-        let mut policy = Mac::new(MacShortcut::F13);
+        let mut policy = Mac::new(only(MacShortcut::F13));
         policy.observe(f13(true, false, NO_MODIFIERS), || true, at(0));
         for (millis, down) in [(100, true), (180, false), (300, true)] {
             policy.observe(shift(down, NO_MODIFIERS), || true, at(millis));
@@ -45,7 +45,7 @@ fn f13(down: bool, repeat: bool, held: Modifiers) -> MacEvent {
 fn a_dedicated_f13_key_holds_repeats_and_releases_without_leaking_to_the_editor() {
     for flags in [0, 0x0080_0000] {
         let held = MacShortcut::F13.modifiers(flags);
-        let mut policy = Mac::new(MacShortcut::F13);
+        let mut policy = Mac::new(only(MacShortcut::F13));
         let press = policy.observe(f13(true, false, held), || true, now());
         assert_eq!(delivered(&press), [Action::Press]);
         assert!(press.swallows());
@@ -69,7 +69,7 @@ fn f13_hold_commands_are_immediate_and_escape_stays_passive() {
         (MAC_A, Action::Show(Scope::Area)),
         (MAC_V, Action::PasteLast),
     ] {
-        let mut policy = Mac::new(MacShortcut::F13);
+        let mut policy = Mac::new(only(MacShortcut::F13));
         let at = now();
         policy.observe(f13(true, false, NO_MODIFIERS), || true, at);
         let command = policy.observe(key(code, true, NO_MODIFIERS), || true, at);
@@ -94,7 +94,7 @@ fn f13_hold_commands_are_immediate_and_escape_stays_passive() {
 
 #[test]
 fn f13_repeats_do_not_restart_after_interruption_and_a_fresh_press_recovers_a_lost_release() {
-    let mut policy = Mac::new(MacShortcut::F13);
+    let mut policy = Mac::new(only(MacShortcut::F13));
     assert_eq!(
         delivered(&policy.observe(f13(true, true, NO_MODIFIERS), || true, now())),
         []
@@ -128,7 +128,7 @@ fn f13_repeats_do_not_restart_after_interruption_and_a_fresh_press_recovers_a_lo
 #[test]
 fn f13_requires_other_shortcuts_to_be_released_and_unselected_f13_passes_through() {
     for flags in [0x0004_0000, 0x0008_0020, 0x0010_0008] {
-        let mut policy = Mac::new(MacShortcut::F13);
+        let mut policy = Mac::new(only(MacShortcut::F13));
         let held = MacShortcut::F13.modifiers(flags);
         assert_eq!(
             delivered(&policy.observe(f13(true, false, held), || true, now())),
@@ -148,11 +148,11 @@ fn f13_requires_other_shortcuts_to_be_released_and_unselected_f13_passes_through
         );
     }
     for shortcut in [
-        MacShortcut::Function,
-        MacShortcut::RightOption,
-        MacShortcut::RightCommand,
+        MacShortcut::FUNCTION,
+        MacShortcut::RIGHT_OPTION,
+        MacShortcut::RIGHT_COMMAND,
     ] {
-        let mut policy = Mac::new(shortcut);
+        let mut policy = Mac::new(only(shortcut));
         for down in [true, false] {
             let decision = policy.observe(f13(down, false, NO_MODIFIERS), || false, now());
             assert_eq!(delivered(&decision), []);

@@ -355,6 +355,7 @@ impl<P: Ports> Owner<P> {
             style: machine.style(),
             preset: machine.preset().cloned(),
             message,
+            trouble: outcome::trouble(machine.outcome()),
             model: machine.model(),
             desktop_ready: machine.desktop_ready(),
             shortcut: Arc::clone(&world.shortcut),
@@ -412,6 +413,7 @@ impl<P: Ports> World<P> {
             Input::PasteLast => machine::Input::PasteLast,
             Input::Submit => machine::Input::Submit,
             Input::StartShow(scope) => machine::Input::StartShow(scope),
+            Input::ToggleShow(scope) => machine::Input::ToggleShow(scope),
             Input::Unavailable(message) => machine::Input::Unavailable(message),
             Input::DesktopReady {
                 shortcut,
@@ -473,7 +475,7 @@ impl<P: Ports> Env<Native> for World<P> {
                 mode,
                 self.capture_events.clone(),
             )
-            .map_err(|error| format!("Cannot open the microphone ({error}). Try again."))?;
+            .map_err(|error| format!("Can't open the microphone ({error}). Try again."))?;
         self.microphone.open(recording);
         Ok(())
     }
@@ -488,7 +490,7 @@ impl<P: Ports> Env<Native> for World<P> {
         let recorder = self
             .ports
             .record_screen(session, started, scope, frames, self.show_events.clone())
-            .map_err(|error| format!("Cannot record the screen: {error}"))?;
+            .map_err(|error| format!("Can't record the screen: {error}"))?;
         self.screen.open(recorder);
         Ok(())
     }
@@ -661,7 +663,7 @@ impl<P: Ports> Env<Native> for World<P> {
                     Ok(Published::Cancelled) => {
                         Err("Recovery cancelled. The interrupted Show is still available.".into())
                     },
-                    Err(error) => Err(format!("Cannot recover this Show: {error:#}")),
+                    Err(error) => Err(format!("Can't recover this Show: {error:#}")),
                 };
                 #[expect(
                     clippy::let_underscore_must_use,
@@ -690,7 +692,7 @@ impl<P: Ports> Env<Native> for World<P> {
             reason = "A closed library no longer waits for its failure notice"
         )]
         let _ = receipt.send(Err(format!(
-            "Cannot recover this Show: {}",
+            "Can't recover this Show: {}",
             outcome::failure(failure)
         )));
     }

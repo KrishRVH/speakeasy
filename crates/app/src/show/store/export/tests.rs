@@ -156,7 +156,7 @@ fn failed_or_repeated_exports_leave_destinations_and_originals_unchanged() -> an
         .context("An export was written into a missing folder")?;
     assert_eq!(
         unplaced.to_string(),
-        "Cannot open the export folder; choose an existing folder"
+        "Can't open the export folder; choose an existing folder"
     );
     assert!(!root.path().join("missing").exists());
     Ok(())

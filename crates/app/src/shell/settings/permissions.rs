@@ -36,7 +36,7 @@ pub(super) const fn blocked(permission: Permission) -> bool {
 }
 
 pub(super) const OPEN: &str = if cfg!(target_os = "linux") {
-    "Microphone help"
+    "Linux setup guide"
 } else if cfg!(target_os = "macos") {
     "Open System Settings"
 } else {

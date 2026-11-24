@@ -107,7 +107,7 @@ fn a_copied_show_shows_its_label_unless_it_lost_its_screen_or_narration() {
         (copied(Ending::ScreenStopped, None), None),
         (
             copied(Ending::WindowClosed, Some(NarrationLoss::NotTranscribed)),
-            Some(DETAILS),
+            Some(SHOW_DETAILS),
         ),
     ] {
         assert_eq!(
@@ -118,7 +118,7 @@ fn a_copied_show_shows_its_label_unless_it_lost_its_screen_or_narration() {
         assert_eq!(
             short.footer(),
             footer,
-            "Only a lost narration's remedy may need Settings"
+            "Only a lost narration points to its remedy in Shows"
         );
         assert_eq!(short.capsule_size(), MESSAGE_SIZE);
         assert_eq!(short.feedback(), Some(NOTICE_FOR), "Long enough to read");

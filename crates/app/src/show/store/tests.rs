@@ -168,7 +168,7 @@ fn a_show_that_cannot_be_saved_names_the_shows_folder_and_a_remedy() -> anyhow::
     .context("A Show was staged beneath a file")?
     .to_string();
     assert!(
-        message.starts_with(&format!("Cannot save the Show in {}: ", blocked.display()))
+        message.starts_with(&format!("Can't save the Show in {}: ", blocked.display()))
             && message.ends_with(", then try again."),
         "{message}"
     );

@@ -36,9 +36,9 @@ pub(crate) struct Exported {
 impl Exported {
     pub(crate) fn note(&self) -> String {
         let voice = match self.voice {
-            voice::Status::Available => "with original voice",
-            voice::Status::Incomplete => "with partial voice (recording was interrupted)",
-            voice::Status::Absent => "silent (this Show has no saved voice)",
+            voice::Status::Available => "with original audio",
+            voice::Status::Incomplete => "with partial audio (recording was interrupted)",
+            voice::Status::Absent => "silent (this Show has no saved audio)",
         };
         let annotations = if self.frames_without_annotations > 0 || self.omitted_annotations > 0 {
             " Some annotations could not be placed; see the saved Show for full context."
@@ -74,7 +74,7 @@ pub(crate) fn write(
     let work = tempfile::Builder::new()
         .prefix(".speakeasy-video-")
         .tempdir_in(&target.folder)
-        .context("Cannot create the video export; check the destination folder and free space")?;
+        .context("Can't create the video export; check the destination folder and free space")?;
     let mut source = File::create_new(work.path().join(encode::SOURCE))?;
     reading.copy_to(&mut source)?;
     anyhow::ensure!(!cancelled(), CANCELLED);

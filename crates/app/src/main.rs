@@ -209,7 +209,7 @@ fn launch(
         ) {
             Ok(pill) => pill,
             Err(error) => {
-                abandon(error.context("Cannot open pill"), (instance, requests), cx);
+                abandon(error.context("Can't open pill"), (instance, requests), cx);
                 return;
             },
         };

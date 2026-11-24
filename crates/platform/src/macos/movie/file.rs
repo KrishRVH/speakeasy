@@ -175,7 +175,7 @@ impl Asset {
         let reader = Reader::new(file, prefix);
         let queue = DispatchQueue::new("Speakeasy movie input", None);
         let url = NSURL::URLWithString(ns_string!(RESOURCE))
-            .context("Cannot create the local movie resource")?;
+            .context("Can't create the local movie resource")?;
 
         let native = unsafe {
             let asset = AVURLAsset::URLAssetWithURL_options(&url, None);

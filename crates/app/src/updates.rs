@@ -9,7 +9,7 @@ use speakeasy_platform::StoppableThread;
 use crate::http::{Trust, client_builder};
 
 const RELEASE: &str = "https://api.github.com/repos/KrishRVH/speakeasy/releases/latest";
-const FAILED: &str = "Cannot check for updates. Check your connection and try again.";
+const FAILED: &str = "Can't check for updates. Check your connection and try again.";
 
 #[cfg(any(target_os = "windows", test))]
 mod install;

@@ -213,7 +213,7 @@ fn a_window_capture_stops_once_its_window_closes_or_goes_off_screen() -> anyhow:
         let followed = subject.window();
         let part = window_part(display.native, followed)
             .map_err(|gone| anyhow!(gone))?
-            .context("Cannot read the owned window's frame")?;
+            .context("Can't read the owned window's frame")?;
         let target = Target {
             display,
             region: Region::Window(followed, part),
@@ -262,7 +262,7 @@ fn window_layouts_sort_windows_by_layer_and_leave_ours_out() -> anyhow::Result<(
         Some(None)
     );
     assert_eq!(classify(hidden.0), None);
-    let listed = stack(display.native).context("Cannot list windows")?;
+    let listed = stack(display.native).context("Can't list windows")?;
     assert!(
         listed.iter().all(|window| ours
             .iter()
@@ -755,7 +755,7 @@ impl Scene {
     }
 
     fn area(&self) -> anyhow::Result<RECT> {
-        frame_bounds(self.backdrop).context("Cannot locate the test scene")
+        frame_bounds(self.backdrop).context("Can't locate the test scene")
     }
 
     fn check_owned(&self, area: RECT) -> anyhow::Result<()> {

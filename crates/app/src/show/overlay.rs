@@ -476,7 +476,7 @@ fn hint() -> Div {
                 .bg(Rgba { a: 0.75, ..SHADE })
                 .text_color(white())
                 .text_size(px(15.0))
-                .child("Drag over the area to record · Click to cancel"),
+                .child("Drag to choose the area to record. Click without dragging to cancel."),
         )
 }
 

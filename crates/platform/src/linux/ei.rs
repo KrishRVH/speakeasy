@@ -158,13 +158,13 @@ impl Sender {
     pub(super) fn connect(api: Api, fd: OwnedFd, keys: PasteKeys) -> anyhow::Result<Self> {
         let context = Ref {
             raw: NonNull::new(unsafe { (api.ei_new_sender)(ptr::null_mut()) })
-                .context("Cannot create the Wayland input sender")?,
+                .context("Can't create the Wayland input sender")?,
             unref: api.ei_unref,
         };
 
         // libei owns the descriptor from here, including closing it.
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
-        ensure!(status == 0, "Cannot connect the Wayland input sender");
+        ensure!(status == 0, "Can't connect the Wayland input sender");
 
         // The readiness registration watches a duplicate of libei's descriptor.
         let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;

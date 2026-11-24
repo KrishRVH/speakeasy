@@ -3,9 +3,10 @@ use std::time::{Duration, Instant};
 use anyhow::Context as _;
 
 use super::*;
-use crate::{MacShortcut, WindowsShortcut};
+use crate::{MacShortcut, Toggles, WindowsShortcut};
 
 mod f13;
+mod recorded;
 mod repeats;
 mod typing;
 mod windows_shortcuts;
@@ -47,8 +48,8 @@ const RETURN: u32 = 0x0D;
 const MAC_F13: i64 = 105;
 const MAC_GLOBE: i64 = 179;
 const NONE_HELD: Physical = Physical {
-    chord_keys: [false; 5],
-    other_shortcut: false,
+    pressed: Pressed::NONE,
+    held: NO_MODIFIERS,
     chord_blocked: false,
 };
 
@@ -56,6 +57,7 @@ const NO_MODIFIERS: Modifiers = Modifiers {
     shift: false,
     other_shortcut: false,
     talk: false,
+    set: ModifierSet::EMPTY,
 };
 
 const FN_HELD: Modifiers = Modifiers {
@@ -69,7 +71,7 @@ const COMMAND_HELD: Modifiers = Modifiers {
 };
 
 fn held(keys: &[u32]) -> Physical {
-    held_for(WindowsShortcut::ControlWindows, keys)
+    held_for(WindowsShortcut::CONTROL_WINDOWS, keys)
 }
 
 fn held_for(shortcut: WindowsShortcut, keys: &[u32]) -> Physical {
@@ -82,6 +84,29 @@ fn held_for(shortcut: WindowsShortcut, keys: &[u32]) -> Physical {
 
 fn now() -> Instant {
     Instant::now()
+}
+
+/// Policy shortcuts with only `talk` set.
+fn only<S: Copy>(talk: S) -> Shortcuts<S> {
+    Shortcuts {
+        talk,
+        toggles: Toggles {
+            hands_free: None,
+            show_screen: None,
+            show_window: None,
+            show_area: None,
+        },
+    }
+}
+
+/// The key code of a Mac preset's own modifier or key.
+fn own_code(shortcut: MacShortcut) -> i64 {
+    match shortcut {
+        MacShortcut::FUNCTION => MAC_FN,
+        MacShortcut::RIGHT_OPTION => MAC_RIGHT_OPTION,
+        MacShortcut::RIGHT_COMMAND => MAC_RIGHT_COMMAND,
+        _ => MAC_F13,
+    }
 }
 
 fn function(down: bool) -> MacEvent {
@@ -144,7 +169,7 @@ fn mac_holding() -> Mac {
 
 #[test]
 fn paste_last_is_a_single_held_press_and_its_release_stays_swallowed() {
-    let mut chord = Chord::default();
+    let mut chord = Talk::default();
     assert!(!chord.hold_key(HoldKey::PasteLast, Stroke::Press).swallows());
     chord.press();
     let first = chord.hold_key(HoldKey::PasteLast, Stroke::Press);
@@ -190,19 +215,19 @@ fn return_during_a_hold_submits_once_and_outside_a_hold_reaches_the_app() {
 fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers() {
     for (shortcut, flags, left_code, left_flag) in [
         (
-            MacShortcut::Function,
+            MacShortcut::FUNCTION,
             0x0080_0000,
             MAC_LEFT_OPTION,
             0x0008_0020,
         ),
         (
-            MacShortcut::RightOption,
+            MacShortcut::RIGHT_OPTION,
             0x0008_0040,
             MAC_LEFT_OPTION,
             0x0008_0020,
         ),
         (
-            MacShortcut::RightCommand,
+            MacShortcut::RIGHT_COMMAND,
             0x0010_0010,
             MAC_LEFT_COMMAND,
             0x0010_0008,
@@ -218,13 +243,13 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
             (MAC_W, Action::Show(Scope::Window)),
             (MAC_A, Action::Show(Scope::Area)),
         ] {
-            let mut policy = Mac::new(shortcut);
+            let mut policy = Mac::new(only(shortcut));
             let pressed = now();
             assert!(
                 policy
                     .observe(
                         MacEvent::FlagsChanged {
-                            code: shortcut.key_code(),
+                            code: own_code(shortcut),
                             held
                         },
                         || false,
@@ -249,12 +274,12 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
             );
             assert_eq!(other.action, Some(Action::Interrupt));
         }
-        let mut policy = Mac::new(shortcut);
+        let mut policy = Mac::new(only(shortcut));
         assert!(
             !policy
                 .observe(
                     MacEvent::FlagsChanged {
-                        code: shortcut.key_code(),
+                        code: own_code(shortcut),
                         held: shortcut.modifiers(flags | left_flag)
                     },
                     || true,
@@ -267,14 +292,14 @@ fn mac_presets_keep_hands_free_shows_and_escape_without_claiming_left_modifiers(
 
 #[test]
 fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
-    for shortcut in [MacShortcut::RightOption, MacShortcut::RightCommand] {
+    for shortcut in [MacShortcut::RIGHT_OPTION, MacShortcut::RIGHT_COMMAND] {
         for code in [MAC_S, MAC_W, MAC_A, MAC_SPACE] {
-            let mut policy = Mac::new(shortcut);
+            let mut policy = Mac::new(only(shortcut));
             let held = FN_HELD;
             let start = now();
             policy.observe(
                 MacEvent::FlagsChanged {
-                    code: shortcut.key_code(),
+                    code: own_code(shortcut),
                     held,
                 },
                 || true,
@@ -313,7 +338,7 @@ fn mac_alternative_modifiers_preserve_quick_application_shortcuts() {
 #[test]
 fn shift_draws_beside_ctrl_win_but_not_in_another_windows_shortcut() {
     let modifiers = |keys: &[u32]| {
-        WindowsShortcut::ControlWindows.modifiers(|key| keys.contains(&u32::from(key)))
+        WindowsShortcut::CONTROL_WINDOWS.modifiers(|key| keys.contains(&u32::from(key)))
     };
     assert!(
         modifiers(&[SHIFT, CONTROL, RIGHT_WINDOWS]).draws(),
@@ -586,12 +611,12 @@ fn mac_shift_pairs_require_the_talk_modifier_to_stay_unchanged() {
     let start = now();
     let at = |millis| start + Duration::from_millis(millis);
     for shortcut in [
-        MacShortcut::Function,
-        MacShortcut::RightOption,
-        MacShortcut::RightCommand,
+        MacShortcut::FUNCTION,
+        MacShortcut::RIGHT_OPTION,
+        MacShortcut::RIGHT_COMMAND,
     ] {
         for (held_before, transition) in [(true, None), (false, Some(true)), (true, Some(false))] {
-            let mut policy = Mac::new(shortcut);
+            let mut policy = Mac::new(only(shortcut));
             let before = Modifiers {
                 talk: held_before,
                 ..NO_MODIFIERS
@@ -599,7 +624,7 @@ fn mac_shift_pairs_require_the_talk_modifier_to_stay_unchanged() {
             if held_before {
                 policy.observe(
                     MacEvent::FlagsChanged {
-                        code: shortcut.key_code(),
+                        code: own_code(shortcut),
                         held: before,
                     },
                     keyboard_fn_up,
@@ -620,7 +645,7 @@ fn mac_shift_pairs_require_the_talk_modifier_to_stay_unchanged() {
             if transition.is_some() {
                 policy.observe(
                     MacEvent::FlagsChanged {
-                        code: shortcut.key_code(),
+                        code: own_code(shortcut),
                         held: after,
                     },
                     keyboard_fn_up,
@@ -954,7 +979,7 @@ fn the_globe_keys_own_event_neither_interrupts_a_fn_hold_nor_counts_as_typing() 
         "The hold ended after the Globe key"
     );
 
-    let mut option = Mac::new(MacShortcut::RightOption);
+    let mut option = Mac::new(only(MacShortcut::RIGHT_OPTION));
     let held = Modifiers {
         talk: true,
         ..NO_MODIFIERS

@@ -46,7 +46,9 @@ impl fmt::Display for Relation {
             Self::Earlier(gap) => (gap, "earlier"),
             Self::Later(gap) => (gap, "later"),
         };
-        if gap.subsec_nanos().is_multiple_of(1_000_000) {
+        if *gap >= Duration::from_secs(1) {
+            write!(f, "{:.1} s {side}", gap.as_secs_f64())
+        } else if gap.subsec_nanos().is_multiple_of(1_000_000) {
             write!(f, "{} ms {side}", gap.as_millis())
         } else {
             write!(f, "{:.3} ms {side}", gap.as_secs_f64() * 1000.0)
@@ -76,8 +78,8 @@ impl Request {
         };
         let sample = match frame.content {
             Content::Png(_) => format!("{first}keyframe #{}", frame.number),
-            Content::Source { .. } => format!("{first}retained sample #{}", frame.number),
-            Content::Video { .. } => "video sample".into(),
+            Content::Source { .. } => format!("{first}frame #{}", frame.number),
+            Content::Video { .. } => "video frame".into(),
         };
         format!(
             "{origin} at {} · {sample} at {}, {relation}",
@@ -102,7 +104,7 @@ pub(super) fn pointer(
             code(&directory.join(name))
         ),
         Content::Source { .. } => format!(
-            "Retained source sample #{} at {at} (no annotations).\nUse the installed Speakeasy \
+            "Saved frame #{} at {at} (no annotations).\nUse the installed Speakeasy \
              command (named in summary.md when available) with `show frame SHOW --at {at} --out \
              NEW.png --json`; pass this folder as SHOW.",
             frame.number
@@ -121,7 +123,7 @@ pub(super) fn pointer(
                 )
             });
             format!(
-                "Video sample at {} · {}.{command}",
+                "Video frame at {} · {}.{command}",
                 Stamp(sampled.into()),
                 annotations.caption()
             )
@@ -131,7 +133,7 @@ pub(super) fn pointer(
         format!("{}\n", request.caption(frame, sampled))
     });
     format!(
-        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby samples do \
+        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby frames do \
          not prove a missing moment.\n",
         code(directory)
     )

@@ -28,7 +28,8 @@ use windows_sys::{
         UI::{
             Input::KeyboardAndMouse::{
                 GetAsyncKeyState, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBD_EVENT_FLAGS, KEYBDINPUT,
-                KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, SendInput, VIRTUAL_KEY,
+                KEYEVENTF_KEYUP, KEYEVENTF_UNICODE, MAPVK_VK_TO_CHAR, MapVirtualKeyW, SendInput,
+                VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
                 GetWindowLongW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
@@ -53,6 +54,15 @@ const BASE_DPI: u32 = 96;
 
 fn is_key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
+}
+
+/// The character the calling thread's keyboard layout prints on the key with virtual-key `code`.
+pub(crate) fn printed_key(code: u16) -> Option<char> {
+    // SAFETY: MapVirtualKeyW only reads the calling thread's keyboard layout.
+    let mapped = unsafe { MapVirtualKeyW(u32::from(code), MAPVK_VK_TO_CHAR) };
+    // The top bit marks a dead key, whose low word still holds the character it prints.
+    char::from_u32(mapped & 0xFFFF)
+        .filter(|character| !character.is_control() && !character.is_whitespace())
 }
 
 pub(crate) fn reduced_motion() -> bool {

@@ -195,6 +195,61 @@ async fn s_after_space_locked_the_hold_still_starts_a_show() -> anyhow::Result<(
     h.close().await
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_show_shortcut_starts_its_show_and_pressed_again_finishes_it() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.input(Input::ToggleShow(Scope::Window));
+    let (_, recorded, _) = receive(&h.shows).await?;
+    assert_eq!(recorded, Scope::Window);
+    receive(&h.captures).await?;
+    h.observe(|snapshot| snapshot.phase == Phase::Recording && snapshot.show)
+        .await?;
+    // Any Show shortcut finishes the Show under way, whatever scope it names.
+    h.input(Input::ToggleShow(Scope::Screen));
+    h.transcribe_next_as("from the shortcut").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("from the shortcut".into()));
+    assert!(
+        h.shows.try_recv().is_err(),
+        "The second press opened another Show"
+    );
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_shortcut_during_dictation_turns_it_into_a_show() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.start().await?;
+    h.input(Input::ToggleShow(Scope::Area));
+    let (_, recorded, _) = receive(&h.shows).await?;
+    assert_eq!(recorded, Scope::Area);
+    h.observe(|snapshot| snapshot.phase == Phase::Recording && snapshot.show)
+        .await?;
+    h.input(Input::ToggleShow(Scope::Area));
+    h.transcribe_next_as("now a show").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("now a show".into()));
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_show_shortcut_in_the_wait_after_one_tap_turns_the_tap_into_a_show() -> anyhow::Result<()>
+{
+    let mut h = Harness::new()?;
+    h.input(Input::Press);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Release);
+    h.input(Input::ToggleShow(Scope::Window));
+    let (_, recorded, _) = receive(&h.shows).await?;
+    assert_eq!(recorded, Scope::Window);
+    h.input(Input::ToggleShow(Scope::Window));
+    h.transcribe_next_as("after a tap").await?;
+    let (_, narration) = receive(&h.published).await?;
+    assert_eq!(narration, Narration::Text("after a tap".into()));
+    h.close().await
+}
+
 const COPIED_WITHOUT_NARRATION: &str = "Show copied without narration.";
 
 const DISCONNECTED: &str = "The microphone was disconnected. Reconnect it.";

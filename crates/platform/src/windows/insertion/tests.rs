@@ -131,7 +131,7 @@ fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
 }
 fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
     let html = clipboard_win::raw::register_format("HTML Format")
-        .context("Cannot register a clipboard format")?;
+        .context("Can't register a clipboard format")?;
     copy_previous(html)?;
     let (mark, saved) = insert.copy(TEXT)?;
     insert.restore(saved, &mark)?;
@@ -221,7 +221,7 @@ fn assert_private_text(source: &str) -> anyhow::Result<()> {
     );
     for name in PRIVATE_FORMATS {
         let format = clipboard_win::raw::register_format(name)
-            .context("Cannot register a clipboard format")?;
+            .context("Can't register a clipboard format")?;
         let mut value = [u8::MAX; 4];
         clipboard_win::raw::get(format.get(), &mut value)
             .with_context(|| format!("{name} is missing from {source}"))?;
@@ -235,7 +235,7 @@ fn enter_private_station() -> anyhow::Result<()> {
     if station.is_null() {
         let refused = std::io::Error::last_os_error();
         return ensure_hidden_station()
-            .with_context(|| format!("Cannot create a window station: {refused}"));
+            .with_context(|| format!("Can't create a window station: {refused}"));
     }
 
     ok_or_last_error(unsafe { SetProcessWindowStation(station) })?;
@@ -245,7 +245,7 @@ fn enter_private_station() -> anyhow::Result<()> {
     let desktop = unsafe { CreateDesktopW(name.as_ptr(), null(), null(), 0, GENERIC_ALL, null()) };
     ensure!(
         !desktop.is_null(),
-        "Cannot create a desktop: {}",
+        "Can't create a desktop: {}",
         std::io::Error::last_os_error()
     );
 
@@ -280,5 +280,5 @@ fn ensure_hidden_station() -> anyhow::Result<()> {
 
 fn image_format() -> anyhow::Result<NonZeroU32> {
     clipboard_win::raw::register_format("Speakeasy test image")
-        .context("Cannot register a clipboard format")
+        .context("Can't register a clipboard format")
 }

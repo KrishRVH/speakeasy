@@ -191,22 +191,28 @@ impl Gesture {
 
     /// A Show records hands-free, so releasing the shortcut that started it does not finish it.
     pub(crate) fn show(&mut self) {
-        if let Phase::Held { started } | Phase::HandsFree { started } = self.phase {
+        if let Phase::Held { started }
+        | Phase::PendingTap { started, .. }
+        | Phase::HandsFree { started } = self.phase
+        {
             self.phase = Phase::Show { started };
         }
     }
 
+    /// Starts hands-free between sessions and finishes one under way. During a hold or the wait
+    /// for a second tap it locks hands-free, as Space does: a hands-free shortcut may share the
+    /// hold's own modifier, which then started the hold a moment before.
     pub(crate) fn toggle(&mut self, now: Moment) -> Option<Action> {
         match self.phase {
             Phase::Idle => {
                 self.phase = Phase::HandsFree { started: now };
                 Some(Action::Start)
             },
-            Phase::Held { .. }
-            | Phase::PendingTap { .. }
-            | Phase::HandsFree { .. }
-            | Phase::Show { .. }
-            | Phase::ShowArmed { .. } => self.finish(),
+            Phase::Held { started } | Phase::PendingTap { started, .. } => {
+                self.phase = Phase::HandsFree { started };
+                None
+            },
+            Phase::HandsFree { .. } | Phase::Show { .. } | Phase::ShowArmed { .. } => self.finish(),
             Phase::Processing | Phase::Saving => None,
         }
     }

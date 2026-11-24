@@ -40,7 +40,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples() -> anyhow::Result<
     let source = retained()?;
     for (kind, [first, third]) in [
         ("first keyframe", [keyframe(1), keyframe(3)]),
-        ("first retained sample", [source.clone(), source]),
+        ("first frame", [source.clone(), source]),
     ] {
         let first = frame(1, 100, first);
         let caption = early.caption(&first, first.presentation);
@@ -65,7 +65,7 @@ fn navigation_reports_exact_earlier_and_first_later_samples() -> anyhow::Result<
             movie::AnnotationState::Off,
         );
         assert!(text.contains("0:20.000") && text.contains("0:01.500"));
-        assert!(text.contains("18500 ms earlier"));
+        assert!(text.contains("18.5 s earlier"));
         if matches!(third.content, preview::Content::Source { .. }) {
             assert!(text.contains("--at 0:01.500"));
         }
@@ -93,7 +93,7 @@ fn a_video_reference_requests_inside_the_displayed_sample_instead_of_rounding_in
         283_333_300
     });
     let text = reference(&sample, at);
-    assert!(text.contains("sample at 0:00.283"));
+    assert!(text.contains("frame at 0:00.283"));
     assert!(text.contains("--video --at 0:00.284"));
     assert!(!reference(&sample, Duration::from_millis(300)).contains("--at"));
     sample.content = video(Duration::from_nanos(33_333_333)..Duration::from_micros(33_500));

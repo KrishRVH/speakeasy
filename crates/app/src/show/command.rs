@@ -74,8 +74,8 @@ An overdue Show then expires at the next cleanup. Only managed Shows can be kept
 export writes a new ZIP with saved images, narration, retained samples, and a relative reading guide.
 It preserves summary edits, excludes recovery audio and unrelated files, and never overwrites.
 Exported copies do not expire automatically. Reports print paths and sizes, never private text.
-video uses FFmpeg from PATH to export timed annotations and original voice, when available.
-A Show without saved voice exports silently.
+video uses FFmpeg from PATH to export timed annotations and original audio, when available.
+A Show without saved audio exports silently.
 --captions adds a selectable subtitle track from timed narration. Video reports missing coverage.
 Focus selects an interval; without FOCUS the entire retained video is exported.
 discard permanently removes an explicit interrupted:ID or checkpoint path from list,
@@ -256,14 +256,14 @@ impl Command {
             Self::List { json } => {
                 let directory = store::directory()?;
                 let entries = recall::list(&directory)
-                    .with_context(|| format!("Cannot list Shows in {}", directory.display()))?;
+                    .with_context(|| format!("Can't list Shows in {}", directory.display()))?;
                 output::list(entries, &directory, json, out)?;
             },
             Self::Inspect { directory, json } => {
                 let directory = locate(&directory)?;
                 let parent = store::directory().ok();
                 let entry = recall::Entry::open(&directory, parent.as_deref())
-                    .with_context(|| format!("Cannot open Show {}", directory.display()))?;
+                    .with_context(|| format!("Can't open Show {}", directory.display()))?;
                 inspect(&entry, json, out)?;
             },
             Self::Wait { patience, json } => {
@@ -280,7 +280,7 @@ impl Command {
                 let directory = address::resolve(&directory, || Ok(parent.clone()))?;
                 let retention =
                     retention::set_kept(&parent, &directory, kept).with_context(|| {
-                        format!("Cannot change retention for {}", directory.display())
+                        format!("Can't change retention for {}", directory.display())
                     })?;
                 output::kept(&directory, retention, json, out)?;
             },
@@ -383,7 +383,7 @@ fn locate(show: &Path) -> anyhow::Result<PathBuf> {
 
 fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
     let directory = std::path::absolute(directory)?.join("speakeasy-show");
-    std::fs::create_dir_all(&directory).context("Cannot create the agent's skill directory")?;
+    std::fs::create_dir_all(&directory).context("Can't create the agent's skill directory")?;
     let path = directory.join("SKILL.md");
     match std::fs::read(&path) {
         Ok(existing) if existing == SKILL.as_bytes() => return Ok(path),
@@ -391,10 +391,10 @@ fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
             "The installed Show skill differs; choose a new skills directory or preserve your edits before replacing it"
         ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-        Err(error) => return Err(error).context("Cannot read the existing Show skill"),
+        Err(error) => return Err(error).context("Can't read the existing Show skill"),
     }
     std::fs::File::create_new(&path)
-        .context("Cannot install the Show skill without replacing an existing file")?
+        .context("Can't install the Show skill without replacing an existing file")?
         .write_all(SKILL.as_bytes())?;
     Ok(path)
 }

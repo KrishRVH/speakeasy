@@ -25,7 +25,7 @@ pub(crate) use handoff::Installer;
 mod tests;
 
 const DOWNLOAD_FAILED: &str =
-    "Cannot download the update. Check your connection and free disk space, then try again.";
+    "Can't download the update. Check your connection and free disk space, then try again.";
 const INVALID_FILE: &str = "The downloaded installer does not match the authenticated release. Nothing was installed. Try again.";
 
 #[cfg(target_os = "windows")]
@@ -43,7 +43,8 @@ impl Download {
     ) -> anyhow::Result<(Self, watch::Receiver<Progress>)> {
         let key = manifest::key()?;
         let root = crate::paths::data_root()?;
-        let (progress, observed) = watch::channel(Progress::Step("Authenticating update"));
+        let (progress, observed) =
+            watch::channel(Progress::Step("Checking the update's signature"));
         let operation = Self::spawn("update-download", move || async move {
             let target = handoff::Target::current(configuration)?;
             let client = client(crate::http::client_builder(crate::http::Trust::System)?)?;

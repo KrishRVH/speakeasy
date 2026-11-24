@@ -48,10 +48,10 @@ impl Entry {
 
 fn read(directory: &Path) -> anyhow::Result<ReadShow> {
     let bytes = fs::read(directory.join(Manifest::FILE))
-        .with_context(|| format!("Cannot read {}", Manifest::FILE))?;
+        .with_context(|| format!("Can't read {}", Manifest::FILE))?;
     let manifest = Manifest::parse(&bytes)?;
     let movie = movie::saved(directory, manifest.recording().duration)
-        .with_context(|| format!("Cannot read {}", movie::FILE))?;
+        .with_context(|| format!("Can't read {}", movie::FILE))?;
     Ok(ReadShow { manifest, movie })
 }
 
@@ -112,7 +112,7 @@ impl SavedShow {
 
 #[cfg(any(target_os = "windows", target_os = "macos", test))]
 fn cannot_read(path: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
-    move |error| anyhow::anyhow!("Cannot read {}: {error}.", path.display())
+    move |error| anyhow::anyhow!("Can't read {}: {error}.", path.display())
 }
 
 #[cfg(test)]

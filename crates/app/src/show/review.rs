@@ -305,7 +305,7 @@ impl Review {
                 None => collection.load()?,
             };
             let rows = library::list(&root.directory)
-                .with_context(|| format!("Cannot open {}", root.directory.display()))?;
+                .with_context(|| format!("Can't open {}", root.directory.display()))?;
             anyhow::Ok((root, rows))
         });
         self.listing = Some(cx.spawn(async move |view, cx| {
@@ -323,7 +323,7 @@ impl Review {
                     },
                     Err(error) => {
                         const REMEDY: &str = "Check that the folder is readable, then refresh.";
-                        view.notice = Some(format!("Cannot read saved Shows: {error:#}. {REMEDY}"));
+                        view.notice = Some(format!("Can't read saved Shows: {error:#}. {REMEDY}"));
                     },
                 }
                 cx.notify();
@@ -415,7 +415,7 @@ impl Review {
             Ok(work) => work,
             Err(error) => {
                 self.replace_image(
-                    ImageState::Failed(format!("Cannot load this frame: {error:#}")),
+                    ImageState::Failed(format!("Can't load this frame: {error:#}")),
                     cx,
                 );
                 cx.notify();
@@ -478,7 +478,7 @@ impl Review {
             self.clear_selection(cx);
         } else {
             self.notice = Some(format!(
-                "Cannot open this Show: {error}. {}",
+                "Can't open this Show: {error}. {}",
                 crate::paths::remedy(&error)
             ));
         }
@@ -539,7 +539,7 @@ impl Review {
         let directory = key.directory.clone();
         let (edit, receipt) = Edit::new(move || retention::set_kept(&parent, &directory, !kept));
         if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
-            self.notice = Some(format!("Cannot change retention: {error:#}"));
+            self.notice = Some(format!("Can't change retention: {error:#}"));
             return;
         }
         self.write = Some(Write::Keeping {
@@ -577,7 +577,7 @@ impl Review {
             Err(error) if error.kind() == io::ErrorKind::NotFound => self.read_failed(error, cx),
             Err(error) => {
                 self.notice = Some(format!(
-                    "Cannot change this Show's retention: {error}. {}",
+                    "Can't change this Show's retention: {error}. {}",
                     crate::paths::remedy(&error)
                 ));
             },
@@ -615,7 +615,7 @@ impl Review {
         let receipt = match request.and_then(|request| (self.actions.copy)(request, cx)) {
             Ok(receipt) => receipt,
             Err(error) => {
-                self.notice = Some(format!("Cannot copy this Show: {error:#}"));
+                self.notice = Some(format!("Can't copy this Show: {error:#}"));
                 cx.notify();
                 return;
             },
@@ -734,7 +734,7 @@ impl Review {
         let key = self.library.selected().cloned();
         let (edit, receipt) = Edit::new(move || interrupted.lock()?.discard());
         if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
-            self.notice = Some(format!("Cannot discard this Show: {error:#}"));
+            self.notice = Some(format!("Can't discard this Show: {error:#}"));
             return;
         }
         let task = cx.spawn(async move |view, cx| {
@@ -747,7 +747,7 @@ impl Review {
                 match result {
                     Ok(()) => view.refresh(cx),
                     Err(error) if view.library.selected() == key.as_ref() => {
-                        view.notice = Some(format!("Cannot discard this Show: {error:#}"));
+                        view.notice = Some(format!("Can't discard this Show: {error:#}"));
                         cx.notify();
                     },
                     Err(_) => cx.notify(),

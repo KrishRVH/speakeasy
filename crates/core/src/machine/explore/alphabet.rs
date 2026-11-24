@@ -111,6 +111,7 @@ fn inputs(events: &mut Events, machine: &Machine<Abstract>) {
             Input::PasteLast,
             Input::Submit,
             Input::StartShow(()),
+            Input::ToggleShow(()),
             Input::Unavailable(()),
         ]
         .map(Event::Input),

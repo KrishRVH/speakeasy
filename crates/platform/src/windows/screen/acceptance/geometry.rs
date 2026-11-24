@@ -39,7 +39,7 @@ fn target_geometry_tracks_an_owned_window_without_sampling_input() -> anyhow::Re
             SWP_NOZORDER | SWP_NOACTIVATE,
         )
     };
-    ensure!(positioned != FALSE, "Cannot move the owned test window");
+    ensure!(positioned != FALSE, "Can't move the owned test window");
     dispatch_messages_for(COMPOSED);
     let expected = display
         .native

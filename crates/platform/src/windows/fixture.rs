@@ -44,7 +44,7 @@ impl Class {
         };
 
         let registered = unsafe { RegisterClassW(&raw const class) } != 0;
-        ensure!(registered, "Cannot register a test window class");
+        ensure!(registered, "Can't register a test window class");
         Ok(Self(name))
     }
 }
@@ -85,7 +85,7 @@ impl Popup {
                 null(),
             )
         };
-        ensure!(!hwnd.is_null(), "Cannot create a test window");
+        ensure!(!hwnd.is_null(), "Can't create a test window");
         Ok(Self(hwnd))
     }
 

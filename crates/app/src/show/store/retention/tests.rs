@@ -99,7 +99,7 @@ fn an_open_windows_file_reports_blocked_cleanup_and_the_next_sweep_finishes() ->
         result
             .unwrap_err()
             .to_string()
-            .starts_with("Cannot delete the expired Show")
+            .starts_with("Can't delete the expired Show")
     );
     store::sweep(root.path(), now)?;
     assert!(!directory.exists());

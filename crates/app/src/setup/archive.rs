@@ -58,12 +58,12 @@ pub(super) async fn unpack(
     command.arg("-xf").arg(&file).arg("-C").arg(&staging);
     let (status, _) = installation.output(&mut command).await.with_context(|| {
         format!(
-            "Cannot run {} to unpack the speech engine. Check that it exists, then try again.",
+            "Can't run {} to unpack the speech engine. Check that it exists, then try again.",
             tar.display()
         )
     })?;
     if !status.success() {
-        bail!("Cannot unpack the speech engine. Check free disk space, then try again.");
+        bail!("Can't unpack the speech engine. Check free disk space, then try again.");
     }
     normalize_archive(&staging)?;
     remove_engine_directory(&directory)?;

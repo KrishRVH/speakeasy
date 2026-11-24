@@ -24,13 +24,13 @@ pub fn start_at_login(on: bool) -> anyhow::Result<()> {
             .and_then(|exe| write(RUN, REG_SZ, &command(&exe)))
             .map_err(|error| {
                 anyhow!(
-                    "Cannot turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
+                    "Can't turn on Start at login: {error}. Allow Speakeasy in your security software, or turn off Start at login in Settings."
                 )
             })
     } else {
         delete(RUN).map_err(|error| {
             anyhow!(
-                "Cannot turn off Start at login: {error}. Turn Speakeasy off in Windows' Startup apps."
+                "Can't turn off Start at login: {error}. Turn Speakeasy off in Windows' Startup apps."
             )
         })
     }

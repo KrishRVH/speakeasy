@@ -26,7 +26,7 @@ impl Settings {
         let (label, action) = self.onboarding_primary(step, ui.cx);
         let back = match step {
             Step::Prepare if self.engine_work.installing().is_some() => {
-                Some(ui.button("Cancel download", Action::Setup, Weight::Quiet))
+                Some(ui.button("Pause download", Action::Setup, Weight::Quiet))
             },
             Step::Prepare => None,
             _ => Some(ui.button("Back", Action::Onboarding(TourAction::Back), Weight::Quiet)),
@@ -145,8 +145,8 @@ impl Settings {
                     "Removing settings and downloads. Your Shows stay.",
                 ))
                 .into_any_element()])
-        } else if self.unreadable {
-            self.unreadable_banner(ui)
+        } else if let Some(error) = &self.unreadable {
+            self.unreadable_banner(error, ui)
         } else if needs_setup {
             kit.group([div()
                 .flex()
@@ -174,12 +174,12 @@ impl Settings {
             .flex_col()
             .gap(px(16.0))
             .child(div().text_size(px(15.0)).line_height(px(22.0)).child(
-                "Your voice becomes text on this computer. No account, no dictation history, no uploads.",
+                "Speech becomes text on this computer. Speakeasy has no account, keeps no dictation history, and uploads nothing.",
             ))
             .child(state)
             .when(needs_setup, |page| {
                 page.child(ui.text(
-                    "One download, then you can dictate offline. Skip returns to Settings without stopping an active download.",
+                    "After this download, dictation works offline. Skip returns to Settings without stopping an active download.",
                 ))
             })
     }
@@ -237,11 +237,15 @@ impl Settings {
             ))
             .child(kit.group([
                 kit.setting(
-                    "Microphone",
+                    if cfg!(target_os = "windows") {
+                        "Microphone"
+                    } else {
+                        "Desktop access"
+                    },
                     if cfg!(target_os = "windows") {
                         "If Windows blocks the microphone, turn on microphone access for desktop apps."
                     } else {
-                        "If your desktop asks to allow the dictation shortcut, approve it."
+                        "If your desktop asks to allow Speakeasy's shortcut or microphone, approve it."
                     },
                     help(permissions::Help::Microphone),
                 )
@@ -263,7 +267,7 @@ impl Settings {
         } else if active && self.presentation.indicator == Indicator::Busy {
             "Transcribing locally…"
         } else if recognized {
-            "That worked. Continue when you're ready."
+            "Your shortcut works."
         } else if live.is_some_and(|live| live.ready) || is_demo(ui.cx) {
             if external {
                 "Press your shortcut, say a sentence, then press it again."
@@ -293,7 +297,7 @@ impl Settings {
             .flex()
             .items_center()
             .gap(px(16.0))
-            .when(!external, |row| row.child(kit.keys(&self.shortcut(), true)))
+            .when(!external, |row| row.child(self.talk_keys(ui, true)))
             .child(
                 div()
                     .flex_1()
@@ -326,9 +330,7 @@ impl Settings {
             })
             .bg(rgb(palette.panel))
             .child(heading)
-            .when(!cfg!(target_os = "linux"), |card| {
-                card.child(kit.detail(self.shortcut_help()))
-            })
+            .children(self.shortcut_help().map(|help| kit.detail(help)))
             .child(
                 div()
                     .id("onboarding-transcript")
@@ -367,7 +369,7 @@ impl Settings {
             .child(ui.text(if is_demo(ui.cx) {
                 "Demo words only. Your microphone is off."
             } else {
-                "Words stay here, never pasted or saved. Leaving this window clears practice."
+                "Practice stays in this window and clears when you leave. Nothing is pasted or saved."
             }))
     }
 
@@ -404,6 +406,17 @@ impl Settings {
                     kit.keys(&self.cancel_shortcut(), false),
                     "Cancel without typing",
                 ),
+                #[cfg(not(target_os = "linux"))]
+                line(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(kit.keys(&self.shortcut(), false))
+                        .child("+")
+                        .children(["S", "W", "A"].map(|key| kit.keycap(key, false))),
+                    "Record your screen, a window, or an area as a Show",
+                ),
             ]
         };
         div()
@@ -413,7 +426,7 @@ impl Settings {
             .child(div().text_size(px(15.0)).child(if is_demo(ui.cx) {
                 "Preview complete. Real dictation stays on this computer, too."
             } else {
-                "That was all on this computer. Now try your shortcut in a note or a chat."
+                "That transcription ran on this computer. Next, try your shortcut in a note or a chat."
             }))
             .child(kit.group(lines))
             .child(ui.text("Come back any time: Settings › General › Setup guide."))

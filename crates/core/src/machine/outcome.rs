@@ -34,9 +34,20 @@ impl<P: Payload> Outcome<P> {
     }
 }
 
+/// What a failure stopped, so a status line can name it without the whole message.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Trouble {
+    Microphone,
+    Shortcut,
+    Transcription,
+    Screen,
+    Show,
+    Other,
+}
+
 #[cfg_attr(test, derive(Clone, Debug))]
 pub enum Failure<P: Payload> {
-    Said(P::Text),
+    Said(Trouble, P::Text),
     InputLost,
     Undelivered(Option<P::Text>),
     PublishStopped,

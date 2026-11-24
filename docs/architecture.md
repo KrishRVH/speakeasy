@@ -41,10 +41,12 @@ Tests live with their modules. Use the linked integration tests when a change cr
   corrections before symbols and style. Corrections preserve timed spans. Show narration has its own
   policy. Check [transcript modules](../crates/app/src/transcript) and
   [owner recognition](../crates/app/src/runtime/tests/recognition.rs).
-- **Input and delivery.** [Keyboard](../crates/platform/src/keyboard.rs) shares Windows and Mac key
-  policy. [Desktop](../crates/platform/src/desktop.rs) supplies each adapter.
-  [Insertion](../crates/platform/src/insertion.rs) commits once, with platform-specific focus and
-  clipboard handling. Check [key policy](../crates/platform/src/keyboard/tests.rs) and
+- **Input and delivery.** [Shortcut](../crates/platform/src/shortcut.rs) names, parses, and checks
+  the keys a person chooses. [Keyboard](../crates/platform/src/keyboard.rs) shares Windows and Mac
+  key policy and the shortcut recorder. [Desktop](../crates/platform/src/desktop.rs) supplies each
+  adapter. [Insertion](../crates/platform/src/insertion.rs) commits once, with platform-specific
+  focus and clipboard handling. Check [key policy](../crates/platform/src/keyboard/tests.rs),
+  [shortcuts](../crates/platform/src/shortcut/tests.rs), and
   [commit tests](../crates/platform/src/insertion/commit/tests.rs). Linux setup is in
   [Linux implementation](linux-implementation.md).
 - **Presentation.** [Pill](../crates/app/src/pill.rs) animates snapshots with

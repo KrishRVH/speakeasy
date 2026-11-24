@@ -60,19 +60,19 @@ impl Instance {
     pub(crate) fn acquire(path: &Path) -> anyhow::Result<Option<(Self, Receiver<Event>)>> {
         let directory = path.parent().context("Settings path has no directory")?;
         fs::create_dir_all(directory)
-            .with_context(|| format!("Cannot create {}", directory.display()))?;
+            .with_context(|| format!("Can't create {}", directory.display()))?;
         let lock_file = directory.join(LOCK_FILE);
         let lock = File::options()
             .write(true)
             .create(true)
             .truncate(false)
             .open(&lock_file)
-            .with_context(|| format!("Cannot open {}", lock_file.display()))?;
+            .with_context(|| format!("Can't open {}", lock_file.display()))?;
         match lock.try_lock() {
             Ok(()) => {},
             Err(fs::TryLockError::WouldBlock) => return reveal_running(path).map(|()| None),
             Err(fs::TryLockError::Error(error)) => {
-                return Err(error).with_context(|| format!("Cannot lock {}", lock_file.display()));
+                return Err(error).with_context(|| format!("Can't lock {}", lock_file.display()));
             },
         }
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
@@ -80,7 +80,7 @@ impl Instance {
         listener.set_nonblocking(true)?;
         let port_file = directory.join(PORT_FILE);
         fs::write(&port_file, listener.local_addr()?.port().to_string())
-            .with_context(|| format!("Cannot write {}", port_file.display()))?;
+            .with_context(|| format!("Can't write {}", port_file.display()))?;
         let (requests, received) = async_channel::bounded(1);
         let (started, startup) = mpsc::sync_channel(1);
         let server = OwnedThread::spawn("instance-server", {
@@ -95,7 +95,7 @@ impl Instance {
         };
         startup
             .recv()?
-            .context("Cannot start Speakeasy's shortcut listener")?;
+            .context("Can't start Speakeasy's shortcut listener")?;
         Ok(Some((instance, received)))
     }
 

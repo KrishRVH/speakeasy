@@ -84,7 +84,7 @@ impl SavedShow {
 fn cannot_save(parent: &Path) -> impl FnOnce(io::Error) -> anyhow::Error {
     move |error| {
         anyhow::anyhow!(
-            "Cannot save the Show in {}: {error}. {}",
+            "Can't save the Show in {}: {error}. {}",
             parent.display(),
             crate::paths::remedy(&error)
         )
@@ -155,7 +155,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     let checkpoints = checkpoint::sweep(parent, now);
     let cutoff = utc_stamp(now.checked_sub(KEPT_FOR).unwrap_or(SystemTime::UNIX_EPOCH));
     let shows =
-        recall::directories(parent).with_context(|| format!("Cannot read {}", parent.display()))?;
+        recall::directories(parent).with_context(|| format!("Can't read {}", parent.display()))?;
     let mut stuck = None;
     for show in shows {
         let due = show
@@ -172,7 +172,7 @@ pub(super) fn sweep(parent: &Path, now: SystemTime) -> anyhow::Result<()> {
     }
     if let Some((show, error)) = stuck {
         anyhow::bail!(
-            "Cannot delete the expired Show {}: {error}. Close its open files; Speakeasy tries \
+            "Can't delete the expired Show {}: {error}. Close its open files; Speakeasy tries \
              again within the hour.",
             show.display()
         );

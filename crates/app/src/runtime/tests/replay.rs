@@ -14,7 +14,12 @@ async fn unavailable_insertion_keeps_exact_text_for_a_fresh_delivery() -> anyhow
     h.phase(Phase::Error).await?;
     let first = h.snapshot();
     assert!(first.last_dictation);
-    assert!(first.message.contains("Paste last dictation"));
+    let remedy = if cfg!(target_os = "linux") {
+        "Paste last dictation"
+    } else {
+        "press V to paste them"
+    };
+    assert!(first.message.contains(remedy), "{}", first.message);
     h.input(Input::PasteLast);
     assert_eq!(receive(&h.pasted).await?, "retained fixture.");
     h.phase(Phase::Done).await?;

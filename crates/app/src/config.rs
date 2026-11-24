@@ -11,7 +11,8 @@ use anyhow::{Context as _, anyhow, ensure};
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 use speakeasy_platform::{
-    Delivery, DesktopOptions, LinuxPaste, MacShortcut, Shortcut, WindowsShortcut,
+    Binding, Delivery, DesktopOptions, LinuxPaste, MacShortcut, NativeShortcut, Problem, Refusal,
+    Scope, Shortcut, Shortcuts, Toggle, Toggles, WindowsShortcut,
 };
 
 use crate::{
@@ -50,8 +51,14 @@ impl Engine {
 pub(crate) struct Config {
     #[serde(skip_serializing_if = "LinuxSettings::is_default")]
     pub linux: LinuxSettings,
+    /// Hold to talk; the name predates the toggles.
     pub mac_shortcut: MacShortcut,
+    #[serde(skip_serializing_if = "Toggles::is_empty")]
+    pub mac_toggles: Toggles<MacShortcut>,
+    /// Hold to talk; the name predates the toggles.
     pub windows_shortcut: WindowsShortcut,
+    #[serde(skip_serializing_if = "Toggles::is_empty")]
+    pub windows_toggles: Toggles<WindowsShortcut>,
     pub engine: Engine,
     pub microphone: Option<String>,
     pub engine_executable: PathBuf,
@@ -78,7 +85,9 @@ impl Default for Config {
         Self {
             linux: LinuxSettings::default(),
             mac_shortcut: MacShortcut::default(),
+            mac_toggles: Toggles::default(),
             windows_shortcut: WindowsShortcut::default(),
+            windows_toggles: Toggles::default(),
             engine: Engine::Nemo,
             microphone: None,
             engine_executable: PathBuf::new(),
@@ -99,6 +108,49 @@ impl Default for Config {
             theme: Theme::default(),
             start_at_login: false,
         }
+    }
+}
+
+/// The Settings row that names a shortcut.
+pub(crate) const fn binding_title(binding: Binding) -> &'static str {
+    match binding {
+        Binding::Talk => "Hold to talk",
+        Binding::Toggle(Toggle::HandsFree) => "Hands-free",
+        Binding::Toggle(Toggle::Show(Scope::Screen)) => "Screen Show",
+        Binding::Toggle(Toggle::Show(Scope::Window)) => "Window Show",
+        Binding::Toggle(Toggle::Show(Scope::Area)) => "Area Show",
+    }
+}
+
+/// Why Settings refuses keys for a shortcut, beside the hold-to-talk keys `talk`.
+pub(crate) fn refusal_message(refusal: Refusal, talk: NativeShortcut) -> String {
+    let (modifiers, reserved) = if cfg!(target_os = "macos") {
+        ("Control or Command", "Esc and Caps Lock")
+    } else {
+        ("Ctrl, Alt, or Win", "Esc, Caps Lock, and Num Lock")
+    };
+    match refusal {
+        Refusal::Problem(Problem::Types) => format!("These keys type text. Add {modifiers}."),
+        Refusal::Problem(Problem::Reserved) => format!("{reserved} can't be shortcuts."),
+        Refusal::Problem(Problem::ShiftAlone) => {
+            "Shift alone types capitals. Add another key.".into()
+        },
+        Refusal::Problem(Problem::AltGraph) => {
+            "Many keyboards type characters with Ctrl and Alt together, as AltGr. Choose other keys."
+                .into()
+        },
+        Refusal::NeedsKey => {
+            "Add a key to the modifiers. Only hold to talk works with modifiers alone.".into()
+        },
+        Refusal::Taken(binding) => format!("{} already uses these keys.", binding_title(binding)),
+        Refusal::BehindTalk => format!(
+            "These keys include {}, which starts dictation first.",
+            talk.label()
+        ),
+        Refusal::Covers(toggle) => format!(
+            "{} uses these keys too, so pressing it would start dictation instead.",
+            binding_title(Binding::Toggle(toggle))
+        ),
     }
 }
 
@@ -208,9 +260,46 @@ impl Config {
         }
     }
 
+    /// This system's shortcuts; Linux binds its own through the desktop.
+    pub(crate) const fn shortcuts(&self) -> Shortcuts<NativeShortcut> {
+        #[cfg(target_os = "macos")]
+        return self.mac_shortcuts();
+        #[cfg(not(target_os = "macos"))]
+        return self.windows_shortcuts();
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub(crate) const fn set_shortcuts(&mut self, shortcuts: Shortcuts<NativeShortcut>) {
+        #[cfg(target_os = "macos")]
+        {
+            self.mac_shortcut = shortcuts.talk;
+            self.mac_toggles = shortcuts.toggles;
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            self.windows_shortcut = shortcuts.talk;
+            self.windows_toggles = shortcuts.toggles;
+        }
+    }
+
+    const fn mac_shortcuts(&self) -> Shortcuts<MacShortcut> {
+        Shortcuts {
+            talk: self.mac_shortcut,
+            toggles: self.mac_toggles,
+        }
+    }
+
+    const fn windows_shortcuts(&self) -> Shortcuts<WindowsShortcut> {
+        Shortcuts {
+            talk: self.windows_shortcut,
+            toggles: self.windows_toggles,
+        }
+    }
+
     pub(crate) fn desktop_options(&self) -> DesktopOptions {
         DesktopOptions {
-            shortcut_key: self.shortcut(),
+            mac: self.mac_shortcuts(),
+            windows: self.windows_shortcuts(),
             shortcut: self.linux.shortcut.clone(),
             cancel: self.linux.cancel.clone(),
             paste: self.text_delivery.linux_paste(),
@@ -219,7 +308,7 @@ impl Config {
     }
 
     pub(crate) fn read(path: &Path) -> anyhow::Result<Self> {
-        let contents = fs::read(path).with_context(|| format!("Cannot read {}", path.display()))?;
+        let contents = fs::read(path).with_context(|| format!("Can't read {}", path.display()))?;
         Ok(parse(&contents, path)?.0)
     }
 
@@ -227,8 +316,14 @@ impl Config {
         matches!(path.try_exists(), Ok(false))
     }
 
-    pub(crate) fn is_unreadable(path: &Path) -> bool {
-        !Self::is_absent(path) && Self::read(path).is_err()
+    /// Why an existing settings file can't be used: the cause alone, since callers name the file.
+    pub(crate) fn unreadable(path: &Path) -> Option<String> {
+        if Self::is_absent(path) {
+            return None;
+        }
+        Self::read(path)
+            .err()
+            .map(|error| error.root_cause().to_string())
     }
 
     pub(crate) fn discard(path: &Path) -> io::Result<()> {
@@ -276,7 +371,9 @@ impl Config {
         let Self {
             linux,
             mac_shortcut,
+            mac_toggles,
             windows_shortcut,
+            windows_toggles,
             engine,
             microphone,
             engine_executable,
@@ -302,8 +399,12 @@ impl Config {
                 (cfg!(target_os = "linux")
                     && (self.linux != *linux
                         || self.text_delivery.linux_paste() != text_delivery.linux_paste()))
-                    || (cfg!(target_os = "macos") && self.mac_shortcut != *mac_shortcut)
-                    || (cfg!(target_os = "windows") && self.windows_shortcut != *windows_shortcut),
+                    || (cfg!(target_os = "macos")
+                        && (self.mac_shortcut != *mac_shortcut
+                            || self.mac_toggles != *mac_toggles))
+                    || (cfg!(target_os = "windows")
+                        && (self.windows_shortcut != *windows_shortcut
+                            || self.windows_toggles != *windows_toggles)),
                 Change::Desktop,
             ),
             (
@@ -368,6 +469,14 @@ impl Config {
     }
 
     fn validate_choices(&self) -> anyhow::Result<()> {
+        let shortcuts = self.shortcuts();
+        if let Some((binding, refusal)) = shortcuts.refused() {
+            return Err(anyhow!(
+                "Choose another {} shortcut in Settings. {}",
+                binding_title(binding),
+                refusal_message(refusal, shortcuts.talk)
+            ));
+        }
         vocabulary::validate(&self.vocabulary)?;
         self.recognition_terms.validate()?;
         if self.uses_nemotron() {
@@ -401,7 +510,7 @@ impl Config {
     ) -> anyhow::Result<()> {
         let cannot_save = |error: io::Error| {
             anyhow!(
-                "Cannot save settings to {}: {error}. {}",
+                "Can't save settings to {}: {error}. {}",
                 path.display(),
                 crate::paths::remedy(&error)
             )
@@ -410,7 +519,7 @@ impl Config {
             Ok(contents) => {
                 let (_, mut file) = parse(&contents, path)?;
                 patch(&mut file, held, draft, validated)
-                    .with_context(|| format!("Cannot save settings to {}", path.display()))?;
+                    .with_context(|| format!("Can't save settings to {}", path.display()))?;
                 serde_json::to_vec_pretty(&file)?
             },
             Err(error) if error.kind() == ErrorKind::NotFound => {
@@ -487,7 +596,7 @@ fn cannot_open(file: &Path, error: &io::Error) -> anyhow::Error {
         )
     } else {
         anyhow!(
-            "Cannot open {} ({error}). Choose it again in Settings.",
+            "Can't open {} ({error}). Choose it again in Settings.",
             file.display()
         )
     }
@@ -502,7 +611,7 @@ fn patch(
 ) -> anyhow::Result<()> {
     for (key, value) in changes(held.iter().copied(), draft, validated)? {
         if key != "linux" {
-            file.insert(key, value);
+            apply(file, key, value);
         }
     }
     let linux = changes(
@@ -511,33 +620,59 @@ fn patch(
         &validated.linux,
     )?;
     if !linux.is_empty() {
-        file.entry("linux")
+        let section = file
+            .entry("linux")
             .or_insert_with(|| Value::Object(Map::new()))
             .as_object_mut()
-            .context("The linux settings must be an object")?
-            .extend(linux);
+            .context("The linux settings must be an object")?;
+        for (key, value) in linux {
+            apply(section, key, value);
+        }
     }
     Ok(())
 }
 
+fn apply(section: &mut Map<String, Value>, key: String, value: Option<Value>) {
+    match value {
+        Some(value) => {
+            section.insert(key, value);
+        },
+        None => {
+            section.remove(&key);
+        },
+    }
+}
+
+/// The keys whose draft differs from every held spelling, each with its validated value; `None`
+/// removes a key the settings no longer write, such as shortcuts emptied to their default.
 fn changes<'a, T: Serialize + 'a>(
     held: impl IntoIterator<Item = &'a T>,
     draft: &T,
     validated: &T,
-) -> serde_json::Result<Vec<(String, Value)>> {
+) -> serde_json::Result<Vec<(String, Option<Value>)>> {
     let held = held
         .into_iter()
         .map(serde_json::to_value)
         .collect::<serde_json::Result<Vec<_>>>()?;
     let draft = serde_json::to_value(draft)?;
-    let Value::Object(validated) = serde_json::to_value(validated)? else {
+    let Value::Object(mut validated) = serde_json::to_value(validated)? else {
         return Err(serde::ser::Error::custom(
             "Settings must serialize as an object",
         ));
     };
-    Ok(validated
+    let mut keys: Vec<String> = validated.keys().cloned().collect();
+    for key in held.iter().filter_map(Value::as_object).flat_map(Map::keys) {
+        if !keys.contains(key) {
+            keys.push(key.clone());
+        }
+    }
+    Ok(keys
         .into_iter()
-        .filter(|(key, _)| held.iter().all(|held| held.get(key) != draft.get(key)))
+        .filter(|key| held.iter().all(|held| held.get(key) != draft.get(key)))
+        .map(|key| {
+            let value = validated.remove(&key);
+            (key, value)
+        })
         .collect())
 }
 

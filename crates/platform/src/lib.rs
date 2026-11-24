@@ -20,6 +20,7 @@ mod owned_thread;
 mod permissions;
 mod process;
 mod screen;
+mod shortcut;
 #[cfg(target_os = "windows")]
 mod windows;
 mod wsl;
@@ -45,9 +46,9 @@ pub use self::{
     awake::{Awake, Keep},
     clipboard::{ClipboardContent, copy_content},
     desktop::{
-        DesktopOptions, FileFilter, GlobeKey, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
-        SecureInput, Shortcut, WindowsShortcut, attach_stdio, copy_text, globe_key, prepare,
-        reduced_motion, secure_input, show_startup_error,
+        DesktopOptions, FileFilter, GlobeKey, InputMonitor, LinuxPaste, NativeWindow, SecureInput,
+        attach_stdio, copy_text, globe_key, prepare, reduced_motion, secure_input,
+        show_startup_error,
     },
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},
@@ -59,6 +60,10 @@ pub use self::{
     screen::{
         Display, Frame, Part, PlacedWindow, PointerMonitor, PointerSample, Scope, ScreenCapture,
         ScreenEvent, Target, WindowGone, WindowLayer, WindowLayout, WindowWatch,
+    },
+    shortcut::{
+        Binding, MacShortcut, NativeShortcut, Problem, Recorded, Refusal, Shortcut, Shortcuts,
+        Toggle, Toggles, WindowsShortcut,
     },
     wsl::wsl,
 };

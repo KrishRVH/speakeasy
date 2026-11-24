@@ -23,7 +23,10 @@ pub enum Input {
     Toggle,
     PasteLast,
     Submit,
+    /// A tray or menu command, which starts a Show only between sessions.
     StartShow(Scope),
+    /// A Show shortcut: it starts a Show, finishes the Show under way, or turns dictation into one.
+    ToggleShow(Scope),
     Unavailable(String),
     DesktopReady {
         shortcut: String,

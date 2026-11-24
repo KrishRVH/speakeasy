@@ -302,6 +302,28 @@ fn an_interruption_finishes_a_recording_show_however_the_shortcut_stands() {
 }
 
 #[test]
+fn a_toggle_during_a_hold_or_the_wait_for_a_second_tap_locks_hands_free() {
+    let start = Moment::default();
+    let mut gesture = Gesture::default();
+    gesture.press(start);
+    assert_eq!(gesture.toggle(start), None, "The toggle finished the hold");
+    assert_eq!(gesture.state(), State::HandsFree);
+    assert_eq!(
+        gesture.release(start),
+        None,
+        "Releasing the hold finished hands-free"
+    );
+    assert_eq!(gesture.toggle(start), Some(Action::Finish));
+
+    let mut gesture = Gesture::default();
+    gesture.press(start);
+    gesture.release(start);
+    assert_eq!(gesture.state(), State::PendingTap);
+    assert_eq!(gesture.toggle(start), None);
+    assert_eq!(gesture.state(), State::HandsFree);
+}
+
+#[test]
 fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
     type Discard = fn(&mut Gesture) -> Option<Action>;
     let start = Moment::default();

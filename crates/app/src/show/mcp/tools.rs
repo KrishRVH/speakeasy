@@ -106,7 +106,7 @@ fn read(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
     let directory = roots.resolve(&request.show)?;
     let summary = recall::summary(&directory).map_err(|error| {
         format!(
-            "Cannot read the edited summary in {}: {error}",
+            "Can't read the edited summary in {}: {error}",
             directory.display()
         )
     })?;
@@ -223,12 +223,12 @@ fn image(roots: &Roots, arguments: Value) -> Result<Vec<Value>, String> {
 }
 
 fn read_png(path: &Path) -> Result<Vec<u8>, String> {
-    fs::read(path).map_err(|error| format!("Cannot read {}: {error}", path.display()))
+    fs::read(path).map_err(|error| format!("Can't read {}: {error}", path.display()))
 }
 
 fn open(directory: &Path, managed: Option<&Path>) -> Result<recall::Entry, String> {
     recall::Entry::open(directory, managed)
-        .map_err(|error| format!("Cannot open the Show at {}: {error}", directory.display()))
+        .map_err(|error| format!("Can't open the Show at {}: {error}", directory.display()))
 }
 
 fn manifest_of(entry: &recall::Entry) -> Result<&Manifest, String> {
@@ -259,7 +259,7 @@ fn source_image(
     let png = frame
         .image
         .encode_png()
-        .map_err(|error| format!("Cannot encode the retained source image: {error}"))?;
+        .map_err(|error| format!("Can't encode the retained source image: {error}"))?;
     let metadata = json!({"show": directory, "location": found, "sampledMs": frame.at.as_millis(), "requestedMs": span.start().as_millis(), "samplingStride": index.stride(), "longestGapMs": source::longest_gap(&index), "annotations": false});
     Ok((png, metadata))
 }
@@ -293,7 +293,7 @@ fn decode<T: serde::de::DeserializeOwned>(arguments: Value) -> Result<T, String>
 
 fn text(value: &impl Serialize) -> Result<Value, String> {
     let text = serde_json::to_string(value)
-        .map_err(|error| format!("Cannot encode Show evidence: {error}"))?;
+        .map_err(|error| format!("Can't encode Show evidence: {error}"))?;
     Ok(json!({"type": "text", "text": text}))
 }
 

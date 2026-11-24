@@ -25,7 +25,9 @@ impl Settings {
             Some(self.desktop_section(ui).into_any_element()),
             Some(self.privacy_section(ui).into_any_element()),
             Some(self.about_section(ui).into_any_element()),
-            (!self.unreadable).then(|| self.start_over(ui).into_any_element()),
+            self.unreadable
+                .is_none()
+                .then(|| self.start_over(ui).into_any_element()),
         ]
         .into_iter()
         .flatten()
@@ -71,7 +73,7 @@ impl Settings {
                 ),
                 switch(
                     "Play sounds",
-                    "Soft tones when dictation starts, stops, or cancels.",
+                    "Soft tones when dictation or a Show starts, finishes, or is cancelled, and when a Show is copied.",
                     Setting::PlaySounds,
                 ),
             ],
@@ -175,7 +177,7 @@ impl Settings {
                     .gap(px(2.0))
                     .child(kit.heading("Privacy"))
                     .child(ui.text(
-                        "Speech becomes text on this computer. No account, no dictation history, no uploads.",
+                        "Speech becomes text on this computer. Speakeasy has no account, keeps no dictation history, and uploads nothing. Shows you record, including their audio, stay on this computer and expire after seven days unless you keep them.",
                     )),
             )
             .when_some(rows, |section, rows| section.child(kit.group(rows)))
@@ -184,7 +186,10 @@ impl Settings {
     fn about_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let detail: SharedString = match &self.update {
-            Update::Idle => "Checks GitHub only when you ask. Installing stays your choice.".into(),
+            Update::Idle => {
+                "Checks GitHub for updates only when you ask, and installs only when you choose."
+                    .into()
+            },
             Update::Checking { .. } => updates::CHECKING.into(),
             Update::Available(version) => format!("Speakeasy {version} is available.").into(),
             #[cfg(target_os = "windows")]

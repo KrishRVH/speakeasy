@@ -1,8 +1,14 @@
 use std::path::Path;
 
 use gpui::{AnyElement, Div, FontWeight, SharedString, div, prelude::*, px, rgb};
+#[cfg(not(target_os = "linux"))]
+use speakeasy_platform::Binding;
 
 use super::{Ui, fraction, progress_text, setup_progress};
+#[cfg(not(target_os = "linux"))]
+use crate::controls::{CORNER, TITLE_TEXT};
+#[cfg(not(target_os = "linux"))]
+use crate::shell::settings::shortcuts::Edit;
 use crate::{
     config::Engine,
     controls::{PANEL_CORNER, Tone, Weight},
@@ -19,11 +25,47 @@ use crate::{
     status::Indicator,
 };
 
+/// macOS Secure Keyboard Entry hides every key but modifiers from the shortcut tap.
+const SECURE_KEYS: &str = "While Secure Keyboard Entry is on, as in a password field, macOS hides these keys from Speakeasy.";
+
+/// The keys held while a shortcut records, announced as they change.
+#[cfg(not(target_os = "linux"))]
+fn recording_keys(
+    ui: &Ui<'_>,
+    holding: Option<speakeasy_platform::NativeShortcut>,
+    large: bool,
+) -> impl IntoElement {
+    let palette = ui.palette;
+    let label = holding.map(speakeasy_platform::NativeShortcut::label);
+    let keys = match &label {
+        Some(label) => ui.kit().keys(label, large),
+        None => div()
+            .h(px(if large { 40.0 } else { 26.0 }))
+            .px(px(12.0))
+            .flex()
+            .items_center()
+            .rounded(CORNER)
+            .border_1()
+            .border_color(palette.edge())
+            .text_size(px(if large { 14.0 } else { 12.0 }))
+            .text_color(rgb(palette.muted))
+            .whitespace_nowrap()
+            .child("Press keys…"),
+    };
+    div()
+        .id("shortcut-recording")
+        .role(gpui::Role::Status)
+        .aria_label(label.unwrap_or_else(|| "Recording a shortcut".into()))
+        .child(keys)
+}
+
 impl Settings {
     pub(super) fn dictation_page(&self, ui: &Ui<'_>) -> Vec<AnyElement> {
         [
             Some(self.shortcut_card(ui).into_any_element()),
-            (!cfg!(target_os = "linux")).then(|| self.show_shortcuts(ui).into_any_element()),
+            #[cfg(not(target_os = "linux"))]
+            Some(self.more_shortcuts(ui).into_any_element()),
+            self.session_preset(ui).map(IntoElement::into_any_element),
             Some(self.speech_section(ui).into_any_element()),
             Some(self.writing_section(ui).into_any_element()),
             Some(self.presets_section(ui).into_any_element()),
@@ -35,10 +77,18 @@ impl Settings {
 
     pub(super) fn shortcut(&self) -> SharedString {
         cfg_select! {
-            target_os = "macos" => self.config.mac_shortcut.label().into(),
-            target_os = "windows" => self.config.windows_shortcut.label().into(),
-            _ => SharedString::from(&self.presentation.shortcut),
+            target_os = "linux" => SharedString::from(&self.presentation.shortcut),
+            _ => self.config.shortcuts().talk.label().into(),
         }
+    }
+
+    /// The hold-to-talk keys, or the keys held while they record.
+    pub(super) fn talk_keys(&self, ui: &Ui<'_>, large: bool) -> AnyElement {
+        #[cfg(not(target_os = "linux"))]
+        if self.shortcuts.is_recording(Binding::Talk) {
+            return recording_keys(ui, self.shortcuts.holding(), large).into_any_element();
+        }
+        ui.kit().keys(&self.shortcut(), large).into_any_element()
     }
 
     pub(super) fn cancel_shortcut(&self) -> String {
@@ -71,9 +121,7 @@ impl Settings {
             .px(px(16.0))
             .pt(px(20.0))
             .pb(px(18.0))
-            .when(!bindings, |heading| {
-                heading.child(kit.keys(&self.shortcut(), true))
-            })
+            .when(!bindings, |heading| heading.child(self.talk_keys(ui, true)))
             .child(
                 div()
                     .flex_1()
@@ -87,7 +135,13 @@ impl Settings {
                             .font_weight(FontWeight::SEMIBOLD)
                             .child(title),
                     )
-                    .child(kit.detail(detail)),
+                    .child({
+                        #[cfg(not(target_os = "linux"))]
+                        let detail = self.binding_detail(ui, Binding::Talk, detail);
+                        #[cfg(target_os = "linux")]
+                        let detail = kit.detail(detail);
+                        detail
+                    }),
             );
         #[cfg(not(target_os = "linux"))]
         let heading = heading.child(self.shortcut_choice(ui));
@@ -131,6 +185,30 @@ impl Settings {
                         .child("while talking")
                 },
             ));
+        // Linux shortcuts arrive as portal activations, so no key reaches Speakeasy during a hold.
+        #[cfg(not(target_os = "linux"))]
+        let legend = {
+            let held = |name: &'static str, key: &'static str| {
+                legend_entry(
+                    ui,
+                    name,
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(kit.keycap(key, false))
+                        .child("while holding"),
+                )
+            };
+            let send = if cfg!(target_os = "macos") {
+                "Return"
+            } else {
+                "Enter"
+            };
+            legend
+                .child(held("Send", send))
+                .child(held("Paste again", "V"))
+        };
         div()
             .flex()
             .flex_col()
@@ -140,9 +218,10 @@ impl Settings {
             .bg(rgb(palette.panel))
             .child(heading)
             .child(legend)
-            .when(!cfg!(target_os = "linux"), |card| {
-                card.child(kit.detail(self.shortcut_help()).px(px(16.0)).pb(px(12.0)))
-            })
+            .children(
+                self.shortcut_help()
+                    .map(|help| kit.detail(help).px(px(16.0)).pb(px(12.0))),
+            )
             .children(
                 self.globe_warning(ui)
                     .map(|warning| warning.mx(px(16.0)).mb(px(16.0))),
@@ -153,7 +232,7 @@ impl Settings {
     /// The Fn shortcut's other meaning on macOS, which fires with every Speakeasy press too.
     fn globe_warning(&self, ui: &Ui<'_>) -> Option<Div> {
         use speakeasy_platform::{GlobeKey, MacShortcut};
-        if self.config.mac_shortcut != MacShortcut::Function {
+        if self.config.mac_shortcut != MacShortcut::FUNCTION {
             return None;
         }
         let (title, effect) = match self.globe_key? {
@@ -184,33 +263,62 @@ impl Settings {
         ))
     }
 
-    pub(super) const fn shortcut_help(&self) -> &'static str {
+    /// A caveat of the hold-to-talk shortcut, where it has one; Linux binds its own.
+    pub(super) fn shortcut_help(&self) -> Option<&'static str> {
         use speakeasy_platform::{MacShortcut, WindowsShortcut};
         const QUICK: &str = "Hold briefly before adding Space, Return, S, W, A, or V. Quick combinations keep their usual action.";
-        if cfg!(target_os = "windows") {
-            return match self.config.windows_shortcut {
-                WindowsShortcut::ControlWindows => {
-                    "Hold Ctrl and Win together. Choose Right Ctrl or F13 if another app already uses Ctrl+Win."
-                },
-                WindowsShortcut::RightControl => QUICK,
-                WindowsShortcut::F13 => {
-                    "Map a spare key, such as Caps Lock, to F13 in PowerToys Keyboard Manager or your keyboard's software. Speakeasy reserves F13 while dictation is enabled."
-                },
-            };
+        if cfg!(target_os = "linux") {
+            return None;
         }
-        match self.config.mac_shortcut {
-            MacShortcut::Function => {
-                "External keyboard? Its Fn key may stay inside the keyboard. Choose F13, Right Option, or Right Command if Fn does nothing."
-            },
-            MacShortcut::F13 => {
-                "Use your keyboard's F13 key, or map a key to F13 in its keyboard software. Speakeasy reserves F13 while dictation is enabled."
-            },
-            MacShortcut::RightOption | MacShortcut::RightCommand => QUICK,
+        let preset = if cfg!(target_os = "macos") {
+            match self.config.mac_shortcut {
+                MacShortcut::FUNCTION => Some(
+                    "External keyboard? Its Fn key may stay inside the keyboard. Choose another shortcut if Fn does nothing.",
+                ),
+                MacShortcut::F13 => Some(
+                    "Use your keyboard's F13 key, or map a key to F13 in its keyboard software. Speakeasy reserves F13 while dictation is enabled.",
+                ),
+                _ => None,
+            }
+        } else {
+            match self.config.windows_shortcut {
+                WindowsShortcut::CONTROL_WINDOWS => Some(
+                    "Hold Ctrl and Win together. Choose another shortcut if an app already uses Ctrl+Win.",
+                ),
+                WindowsShortcut::F13 => Some(
+                    "Map a spare key, such as Caps Lock, to F13 in PowerToys Keyboard Manager or your keyboard's software. Speakeasy reserves F13 while dictation is enabled.",
+                ),
+                _ => None,
+            }
+        };
+        let talk = self.config.shortcuts().talk;
+        preset
+            .or_else(|| talk.is_lone_modifier().then_some(QUICK))
+            .or_else(|| (cfg!(target_os = "macos") && talk.has_key()).then_some(SECURE_KEYS))
+    }
+
+    /// A shortcut row's line under its title: its meaning, the recording under way, or why the
+    /// keys just recorded were refused.
+    #[cfg(not(target_os = "linux"))]
+    fn binding_detail(&self, ui: &Ui<'_>, binding: Binding, meaning: &'static str) -> Div {
+        let kit = ui.kit();
+        if self.shortcuts.is_recording(binding) {
+            return kit.detail("Press the keys, or Esc to cancel.");
         }
+        if let Some((keys, refusal)) = self.shortcuts.refused(binding) {
+            let why = crate::config::refusal_message(refusal, self.config.shortcuts().talk);
+            return kit
+                .detail(format!("{}: {why}", keys.label()))
+                .text_color(rgb(ui.palette.warn));
+        }
+        kit.detail(meaning)
     }
 
     #[cfg(not(target_os = "linux"))]
     pub(super) fn shortcut_choice(&self, ui: &Ui<'_>) -> Div {
+        if self.shortcuts.is_recording(Binding::Talk) {
+            return div().child(ui.button("Cancel", Action::Shortcut(Edit::Cancel), Weight::Quiet));
+        }
         let menu = Menu::Shortcut;
         let action = Action::Menu(menu);
         let trigger = ui
@@ -244,7 +352,7 @@ impl Settings {
             } else if !running {
                 "Resume dictation to practice."
             } else {
-                "Your words stay in this window. Nothing is pasted or saved."
+                "Practice stays in this window and clears when you leave. Nothing is pasted or saved."
             };
             return panel.child(
                 div()
@@ -325,7 +433,7 @@ impl Settings {
                     .gap(px(12.0))
                     .child(
                         kit.detail(
-                            "Choose a word Speakeasy got wrong to correct it; choose its neighbor to make a phrase. Practice is never pasted, and it clears when you leave this window.",
+                            "Choose a word Speakeasy got wrong to correct it; choose its neighbor to make a phrase.",
                         )
                         .flex_1(),
                     )
@@ -334,16 +442,124 @@ impl Settings {
             .children(self.practice_correction(ui))
     }
 
-    fn show_shortcuts(&self, ui: &Ui<'_>) -> Div {
+    /// The optional shortcuts that each start an action and, pressed again, finish it, then the
+    /// Show gestures. Folded away so the page opens on hold to talk and the speech settings.
+    #[cfg(not(target_os = "linux"))]
+    fn more_shortcuts(&self, ui: &Ui<'_>) -> Div {
+        use speakeasy_platform::{Scope, Toggle};
+        let rows = [
+            (
+                Toggle::HandsFree,
+                "Press to start dictating, and again to finish.",
+            ),
+            (
+                Toggle::Show(Scope::Screen),
+                "Press to record the screen, and again to finish.",
+            ),
+            (
+                Toggle::Show(Scope::Window),
+                "Press to record a window, and again to finish.",
+            ),
+            (
+                Toggle::Show(Scope::Area),
+                "Press to record an area, and again to finish.",
+            ),
+        ]
+        .map(|(toggle, meaning)| self.toggle_row(ui, toggle, meaning).into_any_element());
+        let unavailable = if self.can_record_shortcut() {
+            None
+        } else if is_demo(ui.cx) {
+            Some("The preview can't record shortcuts.")
+        } else if self.presentation.in_session {
+            Some("Finish dictating to record a shortcut.")
+        } else {
+            Some("Resume dictation to record a shortcut.")
+        };
+        let kit = ui.kit();
+        let disclosure = kit.disclosure(
+            Action::MoreShortcuts.element_id(),
+            "Hands-free and Show shortcuts",
+            self.more_shortcuts,
+            ui.press(Action::MoreShortcuts),
+        );
+        div()
+            .flex()
+            .flex_col()
+            .gap(px(8.0))
+            .child(div().flex().child(disclosure))
+            .when(self.more_shortcuts, |section| {
+                section
+                    .child(kit.group(rows))
+                    .children(unavailable.map(|note| ui.text(note)))
+                    .when(cfg!(target_os = "macos"), |section| {
+                        section.child(ui.text(SECURE_KEYS))
+                    })
+                    .child(self.show_gestures(ui))
+            })
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    fn toggle_row(
+        &self,
+        ui: &Ui<'_>,
+        toggle: speakeasy_platform::Toggle,
+        meaning: &'static str,
+    ) -> Div {
+        let kit = ui.kit();
+        let binding = Binding::Toggle(toggle);
+        let record = Action::Shortcut(Edit::Record(binding));
+        let can_record = self.can_record_shortcut();
+        let controls = div().flex_none().flex().items_center().gap(px(8.0));
+        let controls = match (
+            self.shortcuts.is_recording(binding),
+            self.config.shortcuts().toggles.get(toggle),
+        ) {
+            (true, _) => controls
+                .child(recording_keys(ui, self.shortcuts.holding(), false))
+                .child(ui.button("Cancel", Action::Shortcut(Edit::Cancel), Weight::Quiet)),
+            (false, Some(keys)) => controls
+                .child(kit.keys(&keys.label(), false))
+                .child(ui.button_if("Change", record, Weight::Secondary, can_record))
+                .child(ui.button(
+                    "Remove",
+                    Action::Shortcut(Edit::Remove(toggle)),
+                    Weight::Quiet,
+                )),
+            (false, None) => {
+                controls.child(ui.button_if("Record", record, Weight::Secondary, can_record))
+            },
+        };
+        div()
+            .flex()
+            .items_center()
+            .gap(px(16.0))
+            .min_h(px(60.0))
+            .px(px(16.0))
+            .py(px(12.0))
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.0))
+                    .flex()
+                    .flex_col()
+                    .gap(px(2.0))
+                    .child(
+                        div()
+                            .text_size(TITLE_TEXT)
+                            .text_color(rgb(ui.palette.ink))
+                            .child(crate::config::binding_title(binding)),
+                    )
+                    .child(self.binding_detail(ui, binding, meaning)),
+            )
+            .child(controls)
+    }
+
+    /// What the hold-to-talk shortcut does with Shows, for reference.
+    #[cfg(not(target_os = "linux"))]
+    fn show_gestures(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
         let shortcut = self.shortcut();
-        let toggle = kit.disclosure(
-            Action::ShowsHelp.element_id(),
-            "Shortcuts for Shows",
-            self.shows_help,
-            ui.press(Action::ShowsHelp),
-        );
         let word = |text: &'static str| div().text_color(rgb(palette.muted)).child(text);
         let key = |text: &'static str| kit.keycap(text, false);
         let keys = || kit.keys(&shortcut, false);
@@ -366,32 +582,25 @@ impl Settings {
                 .child(kit.detail(meaning).flex_1().min_w(px(0.0)).text_right())
                 .into_any_element()
         };
-        div()
-            .flex()
-            .flex_col()
-            .gap(px(8.0))
-            .child(div().flex().child(toggle))
-            .when(self.shows_help, |section| {
-                section.child(kit.group([
-                    line(
-                        vec![keys(), word("+"), key("S"), key("W"), key("A")],
-                        "Record the screen, a window, or an area",
-                    ),
-                    line(
-                        vec![word("Hold"), key("Shift"), word("and move")],
-                        "Draw, without clicking",
-                    ),
-                    line(
-                        vec![key("Shift"), key("Shift"), word("twice")],
-                        "Pin what you drew",
-                    ),
-                    line(
-                        vec![word("Press"), keys(), word("again")],
-                        "Finish the Show",
-                    ),
-                    line(vec![keys(), word("+"), key("Esc")], "Cancel the Show"),
-                ]))
-            })
+        kit.group([
+            line(
+                vec![keys(), word("+"), key("S"), key("W"), key("A")],
+                "Record the screen, a window, or an area",
+            ),
+            line(
+                vec![word("Hold"), key("Shift"), word("and move")],
+                "Draw, without clicking",
+            ),
+            line(
+                vec![key("Shift"), key("Shift"), word("twice")],
+                "Pin what you drew",
+            ),
+            line(
+                vec![word("Press"), keys(), word("again")],
+                "Finish the Show",
+            ),
+            line(vec![keys(), word("+"), key("Esc")], "Cancel the Show"),
+        ])
     }
 
     fn speech_section(&self, ui: &Ui<'_>) -> Div {
@@ -422,7 +631,7 @@ impl Settings {
                 if self.config.microphone.is_none() {
                     "Follows your system's input device."
                 } else {
-                    "Speakeasy always uses this one."
+                    "Speakeasy uses this microphone whenever it's connected, and the system default otherwise."
                 },
                 self.dropdown(ui, Menu::Microphone, "Microphone", self.microphone_name()),
             )
@@ -456,7 +665,7 @@ impl Settings {
                 false,
             ),
             Some(Speech::Managed(Model::Nemotron)) => (
-                "Nemotron 3.5 · Follows your language and recognition hints".into(),
+                "Nemotron 3.5 · 32 locales, in the language you choose".into(),
                 false,
             ),
             Some(Speech::Own) if self.config.speech_configured() => (
@@ -717,7 +926,7 @@ impl Settings {
         );
         let symbols = kit.setting(
             "Spoken symbols",
-            "In the Prose dictation style, “new line”, “new paragraph”, “underscore”, “open paren” and similar phrases write their symbol. Verbatim keeps the words.",
+            "Saying “new line”, “new paragraph”, “underscore”, “open paren”, and similar phrases writes their symbol. The Verbatim dictation style in Speakeasy's menu keeps the words.",
             ui.switch(
                 "Spoken symbols",
                 Setting::SpokenSymbols.is_on(&self.config),
@@ -725,10 +934,10 @@ impl Settings {
             ),
         );
         let scripts = kit.setting(
-            "Scripts can read their dictations",
-            "Lets speakeasy dictation start --print return its words to the script that started it instead of pasting them. The pill shows “To script” while it records.",
+            "Let scripts receive dictations",
+            "A script that runs speakeasy dictation start --print receives the words instead of having them pasted. The pill shows “To script” while it records.",
             ui.switch(
-                "Scripts can read their dictations",
+                "Let scripts receive dictations",
                 Setting::PrintToScripts.is_on(&self.config),
                 Action::Toggle(Setting::PrintToScripts),
             ),

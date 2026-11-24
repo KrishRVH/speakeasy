@@ -148,8 +148,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
     for (_, item) in &styles {
         style_menu.append(item)?;
     }
-    let show_screen = MenuItem::new("Show screen", false, None);
-    let show_area = MenuItem::new("Show area…", false, None);
+    let show_screen = MenuItem::new("Record the screen for a Show", false, None);
+    let show_area = MenuItem::new("Record an area for a Show…", false, None);
     let copy_last_show = MenuItem::new("Copy last Show", false, None);
     let open_last_show = MenuItem::new("Open last Show", false, None);
     let shows = MenuItem::new("Shows…", true, None);

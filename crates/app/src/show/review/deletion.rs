@@ -41,7 +41,7 @@ impl Review {
         let target = directory.clone();
         let (edit, receipt) = Edit::new(move || retention::delete(&parent, &target));
         if let Err(error) = (self.actions.edit)(edit, self.fixture(), cx) {
-            self.notice = Some(format!("Cannot delete this Show: {error:#}"));
+            self.notice = Some(format!("Can't delete this Show: {error:#}"));
             return;
         }
         self.clear_selection(cx);
@@ -73,7 +73,7 @@ impl Review {
                 if let Some(key) = self.library.selected().cloned() {
                     self.open_selected(key, None, cx);
                 }
-                self.notice = Some(format!("Cannot delete this Show: {error:#}"));
+                self.notice = Some(format!("Can't delete this Show: {error:#}"));
             },
             Err(_) => cx.notify(),
         }

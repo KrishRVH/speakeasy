@@ -19,7 +19,7 @@ pub(crate) fn purge(settings: &Path, data: &Path) -> anyhow::Result<()> {
 
 fn cannot_remove(path: &Path, error: &io::Error) -> anyhow::Error {
     anyhow!(
-        "Cannot remove {}: {error}. {}",
+        "Can't remove {}: {error}. {}",
         path.display(),
         crate::paths::remedy(error)
     )

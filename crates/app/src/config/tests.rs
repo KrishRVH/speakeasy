@@ -250,7 +250,7 @@ fn a_save_that_cannot_write_names_the_file_and_what_to_do() -> anyhow::Result<()
         .context("Settings were saved beneath a file")?;
     let message = error.to_string();
     assert!(
-        message.starts_with(&format!("Cannot save settings to {}: ", path.display()))
+        message.starts_with(&format!("Can't save settings to {}: ", path.display()))
             && message.ends_with(", then try again."),
         "{message}"
     );
@@ -361,4 +361,65 @@ fn vocabulary_saves_preserve_other_hand_edits_and_require_session_reconfiguratio
     Config::save_changes(&[&draft], &next, &next.validated(&path)?, &path)?;
     assert_eq!(saved(&path)?["vocabulary"][0]["written"], "Hand edited");
     Ok(())
+}
+
+#[test]
+fn removing_the_last_one_press_shortcut_removes_it_from_the_file() -> anyhow::Result<()> {
+    let directory = tempfile::tempdir()?;
+    let path = directory.path().join("settings.json");
+    let base = valid_config(directory.path())?;
+    save(&base, &base, &path)?;
+    let mut set = base.clone();
+    set.windows_toggles.hands_free = Some("control+shift+h".parse().map_err(anyhow::Error::msg)?);
+    Config::save_changes(&[&base], &set, &set.validated(&path)?, &path)?;
+    assert!(saved(&path)?.get("windows_toggles").is_some());
+    Config::save_changes(&[&set], &base, &base.validated(&path)?, &path)?;
+    assert_eq!(
+        saved(&path)?.get("windows_toggles"),
+        None,
+        "The removed shortcut stayed in the file and would return on the next start"
+    );
+    Ok(())
+}
+
+#[test]
+fn a_settings_file_whose_shortcut_types_or_repeats_another_is_refused() {
+    let typing = Config {
+        mac_toggles: Toggles {
+            hands_free: "k".parse().ok(),
+            ..Toggles::default()
+        },
+        windows_toggles: Toggles {
+            hands_free: "k".parse().ok(),
+            ..Toggles::default()
+        },
+        ..Config::default()
+    };
+    let error = typing
+        .validate_choices()
+        .expect_err("a hands-free K would swallow typing");
+    assert!(
+        error
+            .to_string()
+            .starts_with("Choose another Hands-free shortcut in Settings."),
+        "{error}"
+    );
+    let repeated = Config {
+        mac_toggles: Toggles {
+            show_area: Some(MacShortcut::F13),
+            ..Toggles::default()
+        },
+        windows_toggles: Toggles {
+            show_area: Some(WindowsShortcut::F13),
+            ..Toggles::default()
+        },
+        mac_shortcut: MacShortcut::F13,
+        windows_shortcut: WindowsShortcut::F13,
+        ..Config::default()
+    };
+    assert!(
+        repeated.validate_choices().is_err(),
+        "Two shortcuts shared F13"
+    );
+    assert!(Config::default().validate_choices().is_ok());
 }

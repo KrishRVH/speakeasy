@@ -6,6 +6,8 @@ mod practice;
 mod presets;
 mod recognition;
 mod render;
+#[cfg(not(target_os = "linux"))]
+mod shortcuts;
 mod speech;
 mod text_field;
 mod updates;
@@ -67,16 +69,21 @@ pub(super) struct Settings {
     onboarding_focus: gpui::FocusHandle,
     update: Update,
     _updates: Task<()>,
-    unreadable: bool,
+    /// Why the settings file can't be read, which locks Settings until it is fixed or reset.
+    unreadable: Option<SharedString>,
     reset: Reset,
     downloaded: Vec<Model>,
     own_engine: bool,
     choosing_model: bool,
-    shows_help: bool,
+    /// Whether the hands-free and Show shortcuts are unfolded; open from the start once one is set.
+    #[cfg(not(target_os = "linux"))]
+    more_shortcuts: bool,
     keyboard: bool,
     startup_apps_off: bool,
     /// What macOS also does when Fn is pressed; read again each time Settings comes forward.
     globe_key: Option<speakeasy_platform::GlobeKey>,
+    #[cfg(not(target_os = "linux"))]
+    shortcuts: shortcuts::Editor,
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
     #[cfg(target_os = "windows")]
@@ -147,10 +154,15 @@ impl Settings {
         let desktop_command = desktop_command(&services.path, services.default_settings).into();
         let onboarding = (!services.mode.is_demo() && onboarding::pending(&services.path))
             .then_some(onboarding::Step::Prepare);
-        let unreadable = !services.mode.is_demo() && Config::is_unreadable(&services.path);
+        let unreadable = (!services.mode.is_demo())
+            .then(|| Config::unreadable(&services.path))
+            .flatten()
+            .map(SharedString::from);
         let vocabulary = vocabulary::Editor::new(config.theme, window, cx);
         let recognition = recognition::Editor::new(config.theme, window, cx);
         let presets = presets::Editor::new(config.theme, window, cx);
+        #[cfg(not(target_os = "linux"))]
+        let more_shortcuts = !config.shortcuts().toggles.is_empty();
         let mut view = Self {
             config,
             presentation,
@@ -179,16 +191,28 @@ impl Settings {
             downloaded: crate::setup::downloaded(),
             own_engine: false,
             choosing_model: false,
-            shows_help: false,
+            #[cfg(not(target_os = "linux"))]
+            more_shortcuts,
             keyboard: false,
             startup_apps_off: false,
             globe_key: None,
+            #[cfg(not(target_os = "linux"))]
+            shortcuts: shortcuts::Editor::default(),
             #[cfg(target_os = "linux")]
             desktop_command,
             #[cfg(target_os = "windows")]
             minimize_to_tray: None,
         };
         cx.observe_global::<Services>(Self::present).detach();
+        // A recording takes every key press, so it ends once the person works elsewhere.
+        #[cfg(not(target_os = "linux"))]
+        cx.observe_window_activation(window, |view, window, cx| {
+            if !window.is_window_active() {
+                view.shortcuts.stop();
+                cx.notify();
+            }
+        })
+        .detach();
         view.refresh_microphones(cx);
         super::report_focus(window, cx);
         view
@@ -244,6 +268,10 @@ impl Settings {
         if !matches!(action, Action::Menu(_)) {
             self.close_menu(window, cx);
         }
+        #[cfg(not(target_os = "linux"))]
+        if !matches!(action, Action::Shortcut(_)) {
+            self.shortcuts.stop();
+        }
         match action {
             Action::Onboarding(action) => self.onboarding_action(action, window, cx),
             Action::Page(page) => self.open_page(page, window, cx),
@@ -255,7 +283,8 @@ impl Settings {
                 self.choosing_model = true;
                 self.open_page(navigation::Page::Dictation, window, cx);
             },
-            Action::ShowsHelp => self.shows_help = !self.shows_help,
+            #[cfg(not(target_os = "linux"))]
+            Action::MoreShortcuts => self.more_shortcuts = !self.more_shortcuts,
             Action::OwnEngine => self.use_own_engine(cx),
             Action::Engine(engine) => self.switch_engine(engine, cx),
             Action::Reset => {
@@ -279,16 +308,8 @@ impl Settings {
                 self.config.text_delivery = delivery;
                 self.edited(cx);
             },
-            #[cfg(target_os = "macos")]
-            Action::SelectShortcut(shortcut) => {
-                self.config.mac_shortcut = shortcut;
-                self.edited(cx);
-            },
-            #[cfg(target_os = "windows")]
-            Action::SelectShortcut(shortcut) => {
-                self.config.windows_shortcut = shortcut;
-                self.edited(cx);
-            },
+            #[cfg(not(target_os = "linux"))]
+            Action::Shortcut(edit) => self.edit_shortcut(edit, cx),
             #[cfg(target_os = "linux")]
             Action::SelectBindings(external) => {
                 self.config.linux.external_shortcut = external;
@@ -324,6 +345,7 @@ impl Settings {
             Action::PermissionHelp(help) => cx.open_url(help.url()),
             Action::KeyboardSettings => cx.open_url(KEYBOARD_SETTINGS),
             Action::Shows => super::reveal_shows(cx),
+            Action::SettingsFile => cx.reveal_path(&cx.global::<Services>().path),
             Action::Quit => request_quit(cx),
         }
         cx.notify();
@@ -346,7 +368,7 @@ impl Settings {
     }
 
     const fn locked(&self) -> bool {
-        self.unreadable || self.resetting()
+        self.unreadable.is_some() || self.resetting()
     }
 
     fn can_reset(&self, cx: &App) -> bool {
@@ -385,7 +407,7 @@ impl Settings {
     fn finish_reset(&mut self, result: Result<(), String>, cx: &mut Context<'_, Self>) {
         self.reset = Reset::Idle;
         let path = cx.global::<Services>().path.clone();
-        self.unreadable = Config::is_unreadable(&path);
+        self.unreadable = Config::unreadable(&path).map(SharedString::from);
         self.downloaded = crate::setup::downloaded();
         match result {
             Ok(()) => {
@@ -482,7 +504,7 @@ impl Settings {
             },
             Err(_) => {
                 self.notice = Some(Notice::Problem(
-                    "Cannot list microphones. Check your system's sound settings.".into(),
+                    "Can't list microphones. Check your system's sound settings.".into(),
                 ));
             },
         }
@@ -567,7 +589,7 @@ impl Settings {
             Ok(_) => {},
             Err(_) => {
                 self.notice = Some(Notice::Problem(
-                    "Cannot open the file picker. Try again.".into(),
+                    "Can't open the file picker. Try again.".into(),
                 ));
             },
         }
@@ -652,7 +674,7 @@ impl Settings {
             _retirement: retirement,
         };
         self.notice = Some(Notice::Note(
-            "Download paused. It resumes where it stopped.".into(),
+            "Download paused. Choose Set up automatically to resume where it stopped.".into(),
         ));
     }
 
@@ -830,6 +852,9 @@ struct Presentation {
     preset: Option<String>,
     chosen: Option<crate::config::presets::Preset>,
     in_session: bool,
+    /// Dictation runs between sessions, so its monitor can record a shortcut.
+    #[cfg(not(target_os = "linux"))]
+    can_record_shortcut: bool,
 }
 
 impl Presentation {
@@ -845,6 +870,8 @@ impl Presentation {
             },
             chosen: services.chosen_preset().cloned(),
             in_session: services.is_running() && snapshot.phase.is_active(),
+            #[cfg(not(target_os = "linux"))]
+            can_record_shortcut: services.can_record_shortcut() && !snapshot.phase.is_active(),
             shortcut: Arc::clone(&snapshot.shortcut),
             cancel_shortcut: Arc::clone(&snapshot.cancel_shortcut),
             message: if snapshot.message.is_empty() {
@@ -868,17 +895,16 @@ enum Action {
     Install(Model),
     Models,
     ChooseModel,
-    ShowsHelp,
+    #[cfg(not(target_os = "linux"))]
+    MoreShortcuts,
     OwnEngine,
     Engine(Engine),
     Choose(EngineFile),
     SelectLanguage(&'static str),
     SelectMicrophone(Option<usize>),
     SelectDelivery(TextDelivery),
-    #[cfg(target_os = "macos")]
-    SelectShortcut(speakeasy_platform::MacShortcut),
-    #[cfg(target_os = "windows")]
-    SelectShortcut(speakeasy_platform::WindowsShortcut),
+    #[cfg(not(target_os = "linux"))]
+    Shortcut(shortcuts::Edit),
     #[cfg(target_os = "linux")]
     SelectBindings(bool),
     Toggle(Setting),
@@ -904,6 +930,7 @@ enum Action {
     Pause,
     Preview,
     Shows,
+    SettingsFile,
     Quit,
 }
 

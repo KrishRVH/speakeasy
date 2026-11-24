@@ -25,7 +25,7 @@ fn main() -> ExitCode {
 fn relay(args: impl Iterator<Item = OsString>) -> ExitCode {
     let sibling = match env::current_exe() {
         Ok(exe) => exe.with_file_name(format!("speakeasy{}", env::consts::EXE_SUFFIX)),
-        Err(error) => return fail(format!("Cannot locate Speakeasy: {error}")),
+        Err(error) => return fail(format!("Can't locate Speakeasy: {error}")),
     };
     match Command::new(&sibling).args(args).status() {
         Ok(status) => status
@@ -36,7 +36,7 @@ fn relay(args: impl Iterator<Item = OsString>) -> ExitCode {
                 ExitCode::from,
             ),
         Err(error) => fail(format!(
-            "Cannot start {}: {error}. Keep speakeasy-cli in the same folder as Speakeasy.",
+            "Can't start {}: {error}. Keep speakeasy-cli in the same folder as Speakeasy.",
             sibling.display()
         )),
     }
@@ -59,7 +59,7 @@ fn help() -> ExitCode {
          show --help lists the Show commands. Start the desktop app with speakeasy."
     ) {
         Ok(()) => ExitCode::SUCCESS,
-        Err(error) => fail(format!("Cannot write help: {error}")),
+        Err(error) => fail(format!("Can't write help: {error}")),
     }
 }
 

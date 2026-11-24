@@ -55,7 +55,7 @@ pub(crate) fn copy_content(
             .map(|image| {
                 clipboard_win::raw::register_format("PNG")
                     .map(|png| (image, png))
-                    .context("Cannot register the clipboard image format")
+                    .context("Can't register the clipboard image format")
             })
             .transpose()?;
         write_clipboard(lease, || fill(&content.text, image))
@@ -108,7 +108,7 @@ fn put_back(saved: &[SavedFormat]) -> anyhow::Result<()> {
 fn mark_private() -> anyhow::Result<()> {
     for name in PRIVATE_FORMATS {
         let format = clipboard_win::raw::register_format(name)
-            .context("Cannot register a clipboard format")?;
+            .context("Can't register a clipboard format")?;
         clipboard_win::raw::set_without_clear(format.get(), &0_u32.to_ne_bytes())?;
     }
     Ok(())

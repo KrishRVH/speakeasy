@@ -19,8 +19,6 @@ pub(crate) const CONTROL_TEXT: Pixels = px(13.0);
 pub(crate) const TITLE_TEXT: Pixels = px(14.0);
 pub(crate) const DETAIL_TEXT: Pixels = px(12.0);
 pub(crate) const DETAIL_LINE: Pixels = px(17.0);
-const TRACKING: Pixels = px(1.5);
-const WORD_SPACE: Pixels = px(7.0);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Weight {
@@ -470,6 +468,7 @@ impl<'a> Kit<'a> {
             .child(label)
     }
 
+    #[cfg(not(target_os = "linux"))]
     pub(crate) fn disclosure(
         self,
         id: impl Into<ElementId>,
@@ -926,21 +925,4 @@ pub(crate) fn ring(color: u32) -> Vec<BoxShadow> {
         spread_radius: px(3.0),
         inset: false,
     }]
-}
-
-pub(crate) fn caps(label: &str) -> Div {
-    div()
-        .flex()
-        .flex_wrap()
-        .min_w(px(0.0))
-        .items_center()
-        .gap_x(WORD_SPACE)
-        .gap_y(px(2.0))
-        .children(label.split_whitespace().map(|word| {
-            div().flex().gap(TRACKING).children(
-                word.chars()
-                    .flat_map(char::to_uppercase)
-                    .map(|letter| div().child(SharedString::from(letter.to_string()))),
-            )
-        }))
 }

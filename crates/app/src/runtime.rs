@@ -62,6 +62,8 @@ pub(crate) struct Snapshot {
     pub style: Style,
     pub preset: Option<String>,
     pub message: String,
+    /// What failed, named for status lines; `None` outside a failure or when nothing narrower fits.
+    pub trouble: Option<&'static str>,
     pub model: ModelState,
     pub desktop_ready: bool,
     pub shortcut: Arc<str>,
@@ -88,6 +90,7 @@ impl Default for Snapshot {
             style: Style::default(),
             preset: None,
             message: String::new(),
+            trouble: None,
             model: ModelState::Unavailable,
             desktop_ready: true,
             shortcut: speakeasy_platform::SHORTCUT.into(),

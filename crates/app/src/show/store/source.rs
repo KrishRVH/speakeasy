@@ -50,7 +50,7 @@ impl Reader {
         Source::read(self.0.metadata()?.len(), |range| {
             read_range(&mut self.0, range)
         })
-        .context("Cannot inspect source.frames")
+        .context("Can't inspect source.frames")
     }
 
     pub(in crate::show) fn frame(
@@ -60,7 +60,7 @@ impl Reader {
     ) -> anyhow::Result<SourceFrame> {
         source
             .frame(at, |range| read_range(&mut self.0, range))
-            .context("Cannot read the recorded source frame")
+            .context("Can't read the recorded source frame")
     }
 }
 

@@ -1,4 +1,4 @@
-use speakeasy_core::machine::{Failure, Notice, Outcome, Refusal};
+use speakeasy_core::machine::{Failure, Notice, Outcome, Refusal, Trouble};
 use speakeasy_show::{Ending, NarrationLoss};
 
 use super::commands;
@@ -9,14 +9,14 @@ use crate::runtime::{
 };
 
 const INSERT_FAILED: &str =
-    "Cannot submit the text. Check desktop permissions and clipboard access.";
+    "Speakeasy can't insert your words. Check desktop permissions and clipboard access.";
 
-const REPLAY_HINT: &str = if cfg!(target_os = "macos") {
-    "Your words are kept: hold the shortcut and press V, or choose “Paste last dictation” in the menu bar."
-} else if cfg!(target_os = "windows") {
-    "Your words are kept: hold the shortcut and press V, or choose “Paste last dictation” in the tray."
+/// What happened and the one way back, short enough that the pill's two lines keep it whole; the
+/// cause follows, and the Settings footer shows all of it.
+const UNDELIVERED: &str = if cfg!(any(target_os = "macos", target_os = "windows")) {
+    "Your words didn't reach the app. Hold the shortcut and press V to paste them."
 } else {
-    "Your words are kept: choose “Paste last dictation” in the tray, or run speakeasy paste-last."
+    "Your words didn't reach the app. Choose “Paste last dictation” in the tray."
 };
 
 const WITHHELD_HINT: &str = if cfg!(any(target_os = "macos", target_os = "windows")) {
@@ -30,7 +30,7 @@ pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>
         Outcome::NothingToPaste => commands::refusal(Refusal::NothingToPaste).into(),
         Outcome::Copied(message) => message.clone(),
         Outcome::Withheld(notice) => format!("{notice}{WITHHELD_HINT}"),
-        Outcome::Practiced => "Practice complete. Your words stay in Settings.".into(),
+        Outcome::Practiced => "Practice complete. Your words are in the practice panel.".into(),
         Outcome::Failed(failed) => failure(failed),
         Outcome::ShowCopied(copied) => copied_message(*copied, notice),
         Outcome::Unchosen(Unchosen::Window) => {
@@ -70,14 +70,14 @@ pub(super) fn message(outcome: &Outcome<Native>, notice: Option<&Notice<Native>>
 
 pub(super) fn failure(failure: &Failure<Native>) -> String {
     match failure {
-        Failure::Said(message) => message.clone(),
+        Failure::Said(_, message) => message.clone(),
         Failure::InputLost => {
             "Speakeasy stopped watching the dictation shortcut. Resume dictation to try again."
                 .into()
         },
         Failure::Undelivered(said) => {
             let cause = said.as_deref().unwrap_or(INSERT_FAILED);
-            format!("{REPLAY_HINT} {cause}")
+            format!("{UNDELIVERED} {cause}")
         },
         Failure::PublishStopped => PUBLISH_STOPPED.into(),
         Failure::NotCopied {
@@ -93,18 +93,47 @@ pub(super) fn failure(failure: &Failure<Native>) -> String {
             } else {
                 "The Show, which stopped early,"
             };
-            let (narration, failure) = match narrated(preservation.narration_lost) {
-                Some(narration) => (format!(" {narration}"), failure.as_deref()),
-                None => (String::new(), None),
-            };
-            format!(
-                "{show} was saved{narration} but not copied ({error}). Choose Copy last Show in \
-                 Speakeasy's menu.{}",
-                failure.map_or_else(String::new, |failure| format!(" {failure}"))
-            )
+            // The way to copy it comes first, so the pill's two lines keep it whole.
+            let mut message = format!(
+                "{show} was saved but not copied. Choose Copy last Show in Speakeasy's menu. \
+                 {}",
+                sentence(error)
+            );
+            if let Some(narration) = narrated(preservation.narration_lost) {
+                message.push_str(" It was saved ");
+                message.push_str(narration);
+                message.push('.');
+                if let Some(failure) = failure {
+                    message.push(' ');
+                    message.push_str(failure);
+                }
+            }
+            message
         },
-        Failure::RecoveryStorage(error) => format!("Show recovery storage failed: {error}"),
+        Failure::RecoveryStorage(error) => format!(
+            "Recovery data for this Show can't be saved ({error}). Finish the Show to keep what was \
+             recorded."
+        ),
     }
+}
+
+/// What failed, short enough for a status line that points to Settings for the rest.
+pub(super) const fn trouble(outcome: &Outcome<Native>) -> Option<&'static str> {
+    let Outcome::Failed(failure) = outcome else {
+        return None;
+    };
+    Some(match failure {
+        Failure::Said(Trouble::Microphone, _) => "Microphone unavailable",
+        Failure::Said(Trouble::Shortcut, _) => "Shortcut unavailable",
+        Failure::Said(Trouble::Transcription, _) => "Transcription failed",
+        Failure::Said(Trouble::Screen, _) => "Screen recording failed",
+        Failure::Said(Trouble::Show, _) | Failure::PublishStopped => "Show not saved",
+        Failure::Said(Trouble::Other, _) => return None,
+        Failure::InputLost => "Dictation stopped",
+        Failure::Undelivered(_) => "Can't insert text",
+        Failure::NotCopied { .. } => "Show not copied",
+        Failure::RecoveryStorage(_) => "Show recovery stopped",
+    })
 }
 
 fn copied_message(copied: Copied, notice: Option<&Notice<Native>>) -> String {
@@ -147,15 +176,22 @@ const fn narrated(lost: Option<NarrationLoss>) -> Option<&'static str> {
 
 fn preserved(message: &mut String, preservation: Preservation) {
     if preservation.audio_kept {
-        message.push_str(" Audio is kept for retry in Shows until its original seven-day expiry.");
+        message.push_str(" Audio is kept; transcribe it later in Shows.");
     }
     if preservation.movie_lost {
-        message.push_str(" Video could not be saved; the selected keyframes are available.");
+        message.push_str(" Video wasn't saved, but the keyframes were.");
     }
     if preservation.source_lost {
-        message.push_str(
-            " Retained source frames could not be saved; the selected keyframes are available.",
-        );
+        message.push_str(" Some frames weren't saved, but the keyframes were.");
+    }
+}
+
+/// An error as a sentence, ending in a period.
+fn sentence(text: &str) -> String {
+    if text.ends_with(['.', '!', '?']) {
+        text.to_owned()
+    } else {
+        format!("{text}.")
     }
 }
 
@@ -181,21 +217,17 @@ mod tests {
     fn saved_show_messages_report_retained_audio_and_lost_source_independently() {
         for (audio_kept, source_lost, suffix) in [
             (false, false, ""),
-            (
-                true,
-                false,
-                " Audio is kept for retry in Shows until its original seven-day expiry.",
-            ),
+            (true, false, " Audio is kept; transcribe it later in Shows."),
             (
                 false,
                 true,
-                " Retained source frames could not be saved; the selected keyframes are available.",
+                " Some frames weren't saved, but the keyframes were.",
             ),
             (
                 true,
                 true,
-                " Audio is kept for retry in Shows until its original seven-day expiry. Retained source frames \
-                 could not be saved; the selected keyframes are available.",
+                " Audio is kept; transcribe it later in Shows. Some frames weren't saved, but the \
+                 keyframes were.",
             ),
         ] {
             let preservation = Preservation {
@@ -269,8 +301,9 @@ mod tests {
         };
         assert_eq!(
             message(&Outcome::Failed(unsaved), None),
-            "The Show was saved with partial narration but not copied (Another app holds the \
-             clipboard). Choose Copy last Show in Speakeasy's menu. The microphone was disconnected."
+            "The Show was saved but not copied. Choose Copy last Show in Speakeasy's menu. Another \
+             app holds the clipboard. It was saved with partial narration. The microphone was \
+             disconnected."
         );
     }
 }

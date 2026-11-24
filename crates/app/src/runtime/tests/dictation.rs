@@ -114,7 +114,9 @@ async fn failed_capture_start_preserves_its_reason_and_allows_shutdown() -> anyh
     })?;
     h.input(Input::Press);
     h.phase(Phase::Error).await?;
-    assert!(h.snapshot().message.contains("Thread resources exhausted"));
+    let snapshot = h.snapshot();
+    assert!(snapshot.message.contains("Thread resources exhausted"));
+    assert_eq!(snapshot.trouble, Some("Microphone unavailable"));
     h.close().await
 }
 
@@ -403,7 +405,7 @@ async fn presentation_settings_keep_the_active_session() -> anyhow::Result<()> {
     h.close().await
 }
 
-const REPORT: &str = "Cannot delete every expired Show";
+const REPORT: &str = "Can't delete every expired Show";
 
 #[tokio::test(start_paused = true)]
 async fn only_a_recurring_failure_that_repeats_is_not_new_feedback() -> anyhow::Result<()> {

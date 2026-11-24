@@ -115,7 +115,7 @@ async fn export(
         signal = &mut interrupt => {
             drop(cancel);
             let result = work.await.map_err(stopped)?;
-            signal.context("Cannot listen for video export cancellation")?;
+            signal.context("Can't listen for video export cancellation")?;
             result.map_err(|_cancelled| anyhow::anyhow!(video::CANCELLED))
         },
     }

@@ -14,7 +14,7 @@ use crate::{
         Config,
         presets::{self, LIMIT, Preset},
     },
-    controls::{Weight, icon},
+    controls::{Tone, Weight, icon},
     gpui_ext::EntityUpdate as _,
     icons,
     shell::choices::Used,
@@ -25,6 +25,8 @@ pub(super) struct Editor {
     name: Entity<TextField>,
     naming: bool,
     resolved: Option<(Preset, Preset)>,
+    /// The preset deleted last and where it stood, restorable until the next preset edit.
+    deleted: Option<(usize, Preset)>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -32,6 +34,7 @@ pub(super) enum Edit {
     Use(usize),
     Update(usize),
     Delete(usize),
+    Undo,
     Name,
     Save,
     Cancel,
@@ -51,6 +54,7 @@ impl Editor {
             name,
             naming: false,
             resolved: None,
+            deleted: None,
         }
     }
 
@@ -63,6 +67,7 @@ impl Editor {
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.naming = false;
+        self.deleted = None;
         self.name
             .update(cx, |field, cx| field.set_text(String::new(), cx));
     }
@@ -86,6 +91,7 @@ impl Settings {
         {
             return;
         }
+        let deleted = self.presets.deleted.take();
         match edit {
             Edit::Use(index) => {
                 if let Some(preset) = self.config.presets.get(index).cloned() {
@@ -113,8 +119,20 @@ impl Settings {
             },
             Edit::Delete(index) => {
                 if index < self.config.presets.len() {
-                    self.config.presets.remove(index);
+                    let preset = self.config.presets.remove(index);
                     self.edited(cx);
+                    self.presets.deleted = Some((index, preset));
+                }
+            },
+            Edit::Undo => {
+                if let Some((index, preset)) = deleted {
+                    let mut presets = self.config.presets.clone();
+                    presets.insert(index.min(presets.len()), preset);
+                    // Settings restored from disk since the delete may already hold its name.
+                    if presets::validate(&presets).is_ok() {
+                        self.config.presets = presets;
+                        self.edited(cx);
+                    }
                 }
             },
             Edit::Name => {
@@ -237,6 +255,33 @@ impl Settings {
         }
     }
 
+    /// A preset chosen from Speakeasy's menu lasts until quit, while the page below shows the
+    /// settings Speakeasy returns to; this says so and offers to keep the preset.
+    pub(super) fn session_preset(&self, ui: &Ui<'_>) -> Option<Div> {
+        let name = self.presentation.preset.as_deref()?;
+        let index = self
+            .config
+            .presets
+            .iter()
+            .position(|preset| preset.name() == name);
+        let keep = index.map(|index| {
+            div().child(ui.button_if(
+                "Keep using it",
+                Action::Preset(Edit::Use(index)),
+                Weight::Secondary,
+                !self.engine_work.is_busy()
+                    && !self.presentation.in_session
+                    && self.using.is_none(),
+            ))
+        });
+        Some(ui.kit().banner(
+            Tone::Lamp,
+            format!("Using “{name}” until Speakeasy quits"),
+            "Settings below show what Speakeasy returns to. Keep using the preset to make it your settings.",
+            keep,
+        ))
+    }
+
     pub(super) fn presets_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
@@ -256,6 +301,11 @@ impl Settings {
                     Some(ui.press(Action::Menu(menu))),
                 );
                 let status = if self.preset_in_use(preset) {
+                    let tag = if self.presentation.preset.is_some() {
+                        "This session"
+                    } else {
+                        "In use"
+                    };
                     div()
                         .flex()
                         .items_center()
@@ -265,7 +315,7 @@ impl Settings {
                         .font_weight(FontWeight::MEDIUM)
                         .text_color(rgb(palette.lamp))
                         .child(icon(icons::CHECK, 14.0, palette.lamp))
-                        .child("In use")
+                        .child(tag)
                         .into_any_element()
                 } else {
                     ui.button_if(
@@ -350,6 +400,16 @@ impl Settings {
                     )),
             )
             .child(kit.group(rows))
+            .when_some(self.presets.deleted.as_ref(), |section, (_, preset)| {
+                section.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .child(ui.text(format!("Deleted “{}”.", preset.name())))
+                        .child(ui.button("Undo", Action::Preset(Edit::Undo), Weight::Quiet)),
+                )
+            })
             .when(full, |section| {
                 section.child(ui.text(format!(
                     "Speakeasy keeps up to {LIMIT} presets. Delete one to save another."

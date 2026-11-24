@@ -80,7 +80,7 @@ fn png(image: BgraImage) -> anyhow::Result<Vec<u8>> {
     for [blue, _, red, _] in pixels.as_chunks_mut::<4>().0 {
         std::mem::swap(blue, red);
     }
-    encode_png(width, height, &pixels).context("Cannot encode clipboard image")
+    encode_png(width, height, &pixels).context("Can't encode clipboard image")
 }
 
 #[cfg(any(target_os = "windows", test))]

@@ -6,6 +6,8 @@ use speakeasy_core::{
     lifecycle::Lifecycle,
     machine::{ModelState, Phase},
 };
+#[cfg(any(target_os = "windows", target_os = "macos"))]
+use speakeasy_platform::Recorded;
 use speakeasy_platform::{FocusReport, Input, InputMonitor, OwnedThread};
 use tokio::sync::watch;
 
@@ -284,6 +286,20 @@ impl Services {
 
     pub(super) fn live_runtime(&self) -> Option<&Runtime> {
         self.runtime().filter(|runtime| runtime.is_running())
+    }
+
+    /// Records the next shortcut pressed, which needs dictation running outside the preview.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(super) fn record_shortcut(&self) -> Option<async_channel::Receiver<Recorded>> {
+        self.can_record_shortcut()
+            .then(|| self.lifecycle.active())
+            .flatten()
+            .map(|owners| owners.monitor.record_shortcut())
+    }
+
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    pub(super) fn can_record_shortcut(&self) -> bool {
+        !self.mode.is_demo() && self.live_runtime().is_some()
     }
 
     pub(crate) fn listen_for_requests(
@@ -566,7 +582,7 @@ impl Services {
         let error = match window::open(cx) {
             Ok(()) => error,
             Err(open_error) => anyhow!(
-                "{}. Cannot open Settings: {open_error:#}",
+                "{}. Can't open Settings: {open_error:#}",
                 error.to_string().trim_end_matches('.')
             ),
         };
@@ -668,7 +684,7 @@ impl Services {
             Err(error) => {
                 self.purged(
                     before,
-                    Err(format!("Cannot start the reset: {error}. Try again.")),
+                    Err(format!("Can't start the reset: {error}. Try again.")),
                     &done,
                 );
                 return;

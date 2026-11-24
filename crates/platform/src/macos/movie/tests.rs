@@ -17,7 +17,7 @@ fn fixtures() -> anyhow::Result<PathBuf> {
 }
 
 fn validated(path: &Path) -> anyhow::Result<(File, MoviePrefix)> {
-    let mut file = File::open(path).with_context(|| format!("Cannot open {}", path.display()))?;
+    let mut file = File::open(path).with_context(|| format!("Can't open {}", path.display()))?;
     let prefix = crate::movie::tests::prefix(&mut file)?;
     Ok((file, prefix))
 }

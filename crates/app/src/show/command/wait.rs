@@ -57,7 +57,7 @@ fn first_saved(
         .min_by_key(|&(saved, _)| saved)
         .map(|(_, directory)| {
             Entry::open(&directory, Some(parent))
-                .with_context(|| format!("Cannot open Show {}", directory.display()))
+                .with_context(|| format!("Can't open Show {}", directory.display()))
         })
         .transpose()
 }
@@ -70,8 +70,7 @@ fn saved_at(directory: &Path) -> Option<SystemTime> {
 }
 
 fn shows(parent: &Path) -> anyhow::Result<Vec<PathBuf>> {
-    recall::directories(parent)
-        .with_context(|| format!("Cannot list Shows in {}", parent.display()))
+    recall::directories(parent).with_context(|| format!("Can't list Shows in {}", parent.display()))
 }
 
 #[cfg(test)]

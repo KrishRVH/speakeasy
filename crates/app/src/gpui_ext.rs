@@ -75,8 +75,8 @@ impl<V: Render> WindowUpdate<V> for WindowHandle<V> {
 
 pub(crate) fn native_window(window: &Window, name: &str) -> anyhow::Result<NativeWindow> {
     let handle = HasWindowHandle::window_handle(window)
-        .map_err(|error| anyhow!("Cannot access {name} window: {error}"))?;
-    NativeWindow::new(handle).with_context(|| format!("Cannot access {name} window"))
+        .map_err(|error| anyhow!("Can't access {name} window: {error}"))?;
+    NativeWindow::new(handle).with_context(|| format!("Can't access {name} window"))
 }
 
 pub(crate) fn follow<V: 'static, T: 'static, U: 'static>(

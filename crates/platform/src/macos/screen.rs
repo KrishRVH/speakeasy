@@ -55,7 +55,7 @@ use crate::{
     },
 };
 
-const NO_POINTER: &str = "Cannot find the pointer. Try again.";
+const NO_POINTER: &str = "Can't find the pointer. Try again.";
 
 /// How long capture waits for a native answer, a first frame, or stop confirmation.
 const PATIENCE: Duration = Duration::from_secs(5);
@@ -93,12 +93,12 @@ impl fmt::Display for Failure {
                 "Allow Screen & System Audio Recording for Speakeasy in System Settings › Privacy & Security. If it is already on, remove it with − and add it again, then start the Show again."
             },
             Self::Stalled => "Screen capture stopped responding. Start the Show again.",
-            Self::Unstarted => "Cannot start screen capture. Start the Show again.",
+            Self::Unstarted => "Can't start screen capture. Start the Show again.",
             Self::DisplayLost => {
                 "The recorded display is no longer available. Start the Show again."
             },
             Self::Exposed => {
-                "Cannot keep Speakeasy's windows out of the Show. Start the Show again."
+                "Can't keep Speakeasy's windows out of the Show. Start the Show again."
             },
         };
         f.write_str(message)
@@ -127,7 +127,7 @@ struct Described {
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
     let pointer = pointer_location().context(NO_POINTER)?;
     Ok(on_screen_windows()
-        .context("Cannot list windows. Try again.")?
+        .context("Can't list windows. Try again.")?
         .find(|window| {
             window.layer == Some(WindowLayer::Normal)
                 && window.alpha > 0.0

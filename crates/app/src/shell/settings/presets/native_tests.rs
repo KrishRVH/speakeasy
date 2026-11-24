@@ -112,6 +112,17 @@ pub(in crate::shell::settings) fn exercise(
                 && after_removal.presets.first().map(Preset::name) == Some("Other"),
             "Deleting a preset changed dictation choices or another preset"
         );
+        view.edit_preset(Edit::Undo, window, cx);
+        ensure!(
+            view.config.presets.iter().map(Preset::name).eq(["Coding", "Other"]),
+            "Undo did not put a deleted preset back in its place"
+        );
+        view.edit_preset(Edit::Undo, window, cx);
+        ensure!(
+            view.config.presets.len() == 2,
+            "A second Undo restored the deleted preset twice"
+        );
+        view.edit_preset(Edit::Delete(0), window, cx);
         view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config.language == "en",

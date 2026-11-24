@@ -53,7 +53,7 @@ pub(super) async fn fetch(
     let mut response = request
         .send()
         .await
-        .context("Cannot download. Check your internet connection, then try again.")?;
+        .context("Can't download. Check your internet connection, then try again.")?;
     let status = response.status();
     if !status.is_success() {
         bail!("The download server answered {status}. Try again later.");

@@ -24,14 +24,16 @@ use crate::{
 
 const RETRY_NARRATION: &str = "Transcribe the kept audio with your configured local engine and the \
     original language. This saves a narrated copy; your existing Show and edits stay unchanged.";
-const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio that reached the checkpoint. \
-    Narration uses your configured local engine and the original language.";
-const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered voice stays with the \
+const RECOVER_SHOW: &str = "Recover the frames, ink, marks, and audio saved before the \
+    interruption. Narration uses your configured local engine and the original language.";
+const RECOVERY_AUDIO: &str = "Recovery leaves your clipboard alone. Recovered audio stays with the \
     Show for video export and expires with it.";
 const RECOVERY_PREFIX: &str = "A crash or a slow or full disk can leave a shorter recording. \
     Recovery preserves the original expiry date.";
-const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and voice, even if \
+const DELETE_SHOW: &str = "This removes its images, video, summary, narration, and audio, even if \
     kept. Exported copies and pending recovery audio stay.";
+const OVERDUE: &str =
+    "Past its seven days, so the next cleanup deletes it once you stop keeping it.";
 const RECORD_HINT: &str =
     "Hold your shortcut and press S, W, or A to record your screen, a window, or an area.";
 
@@ -403,7 +405,7 @@ impl Review {
         {
             "Saving…"
         } else {
-            keep_label(row, now)
+            keep_label(row)
         };
         div()
             .flex()
@@ -450,6 +452,7 @@ impl Review {
                 kept.is_some() && self.can_keep(),
                 cx,
             ))
+            .when(overdue(row, now), |bar| bar.child(kit.detail(OVERDUE)))
             .child(self.more(kit, palette, cx))
     }
 
@@ -547,7 +550,7 @@ impl Review {
                             .child(mode(Mode::Keyframes, "Keyframes", true))
                             .child(mode(
                                 Mode::Source,
-                                "All retained frames",
+                                "Every saved frame",
                                 detail.source_available,
                             ))
                             .when(
@@ -981,16 +984,19 @@ fn status(row: &Row) -> impl Iterator<Item = (&'static str, Tone)> {
     .flatten()
 }
 
-fn keep_label(row: Option<&Row>, now: SystemTime) -> &'static str {
-    let Some(kept) = row.filter(|row| row.pinned == Some(true)) else {
-        return "Keep Show";
-    };
-    let overdue = matches!(Retention::of(kept.name(), false), Retention::Expires(at) if at <= now);
-    if overdue {
-        "Allow cleanup"
+fn keep_label(row: Option<&Row>) -> &'static str {
+    if row.is_some_and(|row| row.pinned == Some(true)) {
+        "Stop keeping"
     } else {
-        "Allow expiry"
+        "Keep Show"
     }
+}
+
+/// Whether a kept Show is past its seven days, so the next cleanup deletes it once unkept.
+fn overdue(row: Option<&Row>, now: SystemTime) -> bool {
+    row.filter(|row| row.pinned == Some(true)).is_some_and(
+        |kept| matches!(Retention::of(kept.name(), false), Retention::Expires(at) if at <= now),
+    )
 }
 
 fn heading(
@@ -1126,7 +1132,7 @@ fn confirm(
         .border_1()
         .border_color(alpha(palette.warn, 0.3))
         .bg(alpha(palette.warn, 0.06))
-        .child(div().flex().child(kit.tag("Cannot be undone", Tone::Warn)))
+        .child(div().flex().child(kit.tag("Can't be undone", Tone::Warn)))
         .child(div().line_height(BODY_LINE).child(confirmation.message))
         .child(
             div()

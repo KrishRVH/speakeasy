@@ -9,12 +9,12 @@ fn rebind(config: &Config) -> Config {
     Config {
         linux,
         mac_shortcut: if config.mac_shortcut == MacShortcut::F13 {
-            MacShortcut::Function
+            MacShortcut::FUNCTION
         } else {
             MacShortcut::F13
         },
         windows_shortcut: if config.windows_shortcut == WindowsShortcut::F13 {
-            WindowsShortcut::ControlWindows
+            WindowsShortcut::CONTROL_WINDOWS
         } else {
             WindowsShortcut::F13
         },

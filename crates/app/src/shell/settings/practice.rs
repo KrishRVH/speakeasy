@@ -50,7 +50,7 @@ impl Settings {
 
     pub(super) fn toggle_practice(&mut self, cx: &mut Context<'_, Self>) {
         if is_demo(cx) && self.onboarding == Some(Step::Practice) {
-            self.practice.text = "A little practice goes a long way.".into();
+            self.practice.text = "Please send the draft by Friday.".into();
             return;
         }
         if self.practice.live.is_some() {

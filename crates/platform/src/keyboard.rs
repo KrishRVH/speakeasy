@@ -1,26 +1,33 @@
 use std::{
     mem,
+    sync::{Mutex, MutexGuard, PoisonError},
     time::{Duration, Instant},
 };
 
-use crate::{Input, InputSender, Scope, Taps};
+use async_channel::{Receiver, Sender};
+
+use crate::{
+    Input, InputSender, Recorded, Scope, Taps,
+    shortcut::{Chord, Modifier, ModifierSet, NativeShortcut, Pressed, Shortcuts, Side, Toggle},
+};
 
 const SHIFT_TAP: Duration = Duration::from_millis(300);
 
 const SHIFT_TAP_GAP: Duration = Duration::from_millis(400);
 
-/// A hold key this soon after a right-hand modifier shortcut's press belongs to the app.
+/// A hold key this soon after a lone-modifier shortcut's press belongs to the app.
 ///
 /// A deliberate hold tells gestures from ordinary shortcuts such as Ctrl+V or Command+S.
 const APPLICATION_SHORTCUT: Duration = Duration::from_millis(250);
 
+/// The talk shortcut's hold, and the hold keys it swallows.
 #[derive(Default)]
-struct Chord {
+struct Talk {
     hold: Hold,
     swallowing: u8,
 }
 
-impl Chord {
+impl Talk {
     fn press(&mut self) -> Option<Action> {
         if self.hold != Hold::Released {
             return None;
@@ -96,7 +103,7 @@ impl Chord {
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum Stroke {
+pub(super) enum Stroke {
     Press,
     Repeat,
     Release,
@@ -117,7 +124,7 @@ enum Hold {
     #[default]
     Released,
     Held,
-    /// Another key ended the hold; nothing restarts it until the chord is released.
+    /// Another key ended the hold; nothing restarts it until the shortcut is released.
     Interrupted,
 }
 
@@ -218,6 +225,7 @@ enum Action {
     Submit,
     Show(Scope),
     Pin(Taps),
+    Toggle(Toggle),
     Escape,
     Interrupt,
 }
@@ -232,6 +240,8 @@ impl Action {
             Self::Submit => input.deliver(Input::Submit),
             Self::Show(scope) => input.deliver(Input::Show(scope)),
             Self::Pin(taps) => input.deliver(Input::Pin(taps)),
+            Self::Toggle(Toggle::HandsFree) => input.deliver(Input::Toggle),
+            Self::Toggle(Toggle::Show(scope)) => input.deliver(Input::ToggleShow(scope)),
             Self::Escape => input.deliver(Input::Escape),
             Self::Interrupt => {
                 input.deliver(Input::Interrupt);
@@ -283,9 +293,16 @@ impl Decision {
         self.swallowed
     }
 
-    #[cfg(any(target_os = "windows", test))]
+    #[cfg(test)]
     pub(super) fn starts(&self) -> bool {
         self.action == Some(Action::Press)
+    }
+
+    /// Whether this decision acts on held modifiers, so Windows must not read a lone Win or Alt
+    /// release afterwards as opening Start or a menu bar.
+    #[cfg(any(target_os = "windows", test))]
+    pub(super) const fn uses_modifiers(&self) -> bool {
+        matches!(self.action, Some(Action::Press | Action::Toggle(_)))
     }
 
     pub(super) fn deliver(&self, input: &InputSender) {
@@ -300,10 +317,24 @@ pub(super) struct Modifiers {
     pub(super) shift: bool,
     /// A modifier outside the talk shortcut, or only part of it: Shift then means a shortcut.
     pub(super) other_shortcut: bool,
+    /// Every modifier of the talk shortcut is held; for a shortcut with a key, its key may not be.
     pub(super) talk: bool,
+    /// Every modifier held, without sides, which a toggle shortcut must match exactly.
+    pub(super) set: ModifierSet,
 }
 
 impl Modifiers {
+    /// What `pressed` means for the talk shortcut `chord`.
+    pub(super) fn of(chord: Chord, pressed: Pressed) -> Self {
+        let talk = !chord.modifiers().is_empty() && chord.modifiers_held(pressed);
+        Self {
+            shift: pressed.has(Modifier::Shift, None),
+            other_shortcut: chord.outside(pressed) || chord.partly_held(pressed),
+            talk,
+            set: pressed.modifiers(),
+        }
+    }
+
     /// Insertion waits while any is held, so a paste never merges with the shortcut.
     pub(super) const fn any(self) -> bool {
         self.shift || self.other_shortcut || self.talk
@@ -321,91 +352,126 @@ impl Modifiers {
 #[cfg(any(target_os = "windows", test))]
 #[derive(Clone, Copy)]
 pub(super) struct Physical {
-    chord_keys: [bool; 5],
-    other_shortcut: bool,
-    /// Refuses a chord press; Ctrl+Win checks only Alt.
+    pressed: Pressed,
+    held: Modifiers,
+    /// Refuses a talk press: a modifier outside the shortcut is held.
     ///
-    /// Async key state lags the hook, so while the chord's second key goes down the first reads
-    /// as a lone Ctrl or Win, which `other_shortcut` counts.
+    /// Async key state lags the hook, so while a shortcut's second key goes down the first reads
+    /// as part of it, which `held.other_shortcut` counts and this does not.
     chord_blocked: bool,
 }
 
 #[cfg(any(target_os = "windows", test))]
 impl Physical {
     pub(super) fn read(shortcut: crate::WindowsShortcut, down: impl Fn(u16) -> bool) -> Self {
-        let other_shortcut = shortcut.modifiers(&down).other_shortcut;
+        let chord = shortcut.chord();
+        let pressed = Windows::pressed(down);
         Self {
-            chord_keys: Windows::CHORD_KEYS.map(&down),
-            other_shortcut,
-            chord_blocked: match shortcut {
-                crate::WindowsShortcut::ControlWindows => down(Windows::ALT),
-                _ => other_shortcut,
-            },
+            pressed,
+            held: Modifiers::of(chord, pressed),
+            chord_blocked: chord.outside(pressed),
         }
     }
 }
 
 #[cfg(any(target_os = "windows", test))]
 impl crate::WindowsShortcut {
+    /// What the keys `down` reports held mean for this talk shortcut.
+    ///
+    /// A swallowed key, such as F13 alone, never reaches async key state, so it cannot read as
+    /// held.
     pub(super) fn modifiers(self, down: impl Fn(u16) -> bool) -> Modifiers {
-        let alt = down(Windows::ALT);
-        let control = down(Windows::CONTROL);
-        let windows = down(Windows::LEFT_WINDOWS) || down(Windows::RIGHT_WINDOWS);
-        let (talk, other_shortcut) = match self {
-            Self::ControlWindows => (control && windows, alt || control != windows),
-            Self::RightControl => {
-                let right = down(Windows::RIGHT_CONTROL);
-                (right, alt || windows || down(Windows::LEFT_CONTROL))
-            },
-            // A swallowed F13 never reaches async key state, so it cannot read as held.
-            Self::F13 => (false, alt || control || windows),
-        };
-        Modifiers {
-            shift: down(Windows::SHIFT),
-            other_shortcut,
-            talk,
-        }
+        Modifiers::of(self.chord(), Windows::pressed(down))
     }
+}
 
-    const fn holds(self, key: u16) -> bool {
-        match self {
-            Self::ControlWindows => matches!(
-                key,
-                Windows::LEFT_CONTROL
-                    | Windows::RIGHT_CONTROL
-                    | Windows::LEFT_WINDOWS
-                    | Windows::RIGHT_WINDOWS
-            ),
-            Self::RightControl => key == Windows::RIGHT_CONTROL,
-            Self::F13 => key == Windows::F13,
-        }
-    }
+/// A toggle shortcut's key, swallowed from the press that acted through its release.
+#[derive(Default)]
+struct ToggleKey(Option<u16>);
 
-    const fn held(self, keys: [bool; 5]) -> bool {
-        let [
-            left_control,
-            right_control,
-            left_windows,
-            right_windows,
-            f13,
-        ] = keys;
-        match self {
-            Self::ControlWindows => {
-                (left_control || right_control) && (left_windows || right_windows)
+impl ToggleKey {
+    /// Acts on a fresh press of a toggle's key with exactly its modifiers `held`.
+    fn observe(
+        &mut self,
+        toggles: impl IntoIterator<Item = (Toggle, Chord)>,
+        key: u16,
+        stroke: Stroke,
+        held: ModifierSet,
+    ) -> Option<Decision> {
+        match stroke {
+            Stroke::Press => {
+                let toggle = toggles.into_iter().find_map(|(toggle, chord)| {
+                    (chord.code() == Some(key) && chord.exactly(held)).then_some(toggle)
+                })?;
+                self.0 = Some(key);
+                Some(Decision::swallow(Some(Action::Toggle(toggle))))
             },
-            Self::RightControl => right_control,
-            Self::F13 => f13,
+            Stroke::Repeat => (self.0 == Some(key)).then(|| Decision::swallow(None)),
+            Stroke::Release => (self.0 == Some(key)).then(|| {
+                self.0 = None;
+                Decision::swallow(None)
+            }),
         }
     }
+}
+
+/// The talk shortcut's own key, which only a press that completes the shortcut claims.
+///
+/// A claimed key is swallowed through its release. Alone, without modifiers, the key is
+/// reserved, as F13 is, so its every stroke is swallowed.
+fn talk_key(
+    talk: &mut Talk,
+    claimed: &mut bool,
+    stroke: Stroke,
+    completes: bool,
+    reserved: bool,
+) -> Option<Decision> {
+    match stroke {
+        Stroke::Press if completes => {
+            *claimed = true;
+            Some(Decision::swallow(talk.press()))
+        },
+        Stroke::Press | Stroke::Repeat => (*claimed || reserved).then(|| Decision::swallow(None)),
+        Stroke::Release => {
+            let claimed = mem::take(claimed);
+            (claimed || reserved).then(|| Decision::swallow(talk.release()))
+        },
+    }
+}
+
+/// A hold key this soon after a single-modifier shortcut's press belongs to the app, as in
+/// Right Ctrl+C; Fn has no app shortcuts to leave alone.
+fn defers_to_applications(chord: Chord, pressed: Option<Instant>, at: Instant) -> bool {
+    chord.code().is_none()
+        && chord
+            .modifiers()
+            .single()
+            .is_some_and(|modifier| modifier != Modifier::Function)
+        && pressed
+            .is_none_or(|pressed| at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT)
+}
+
+fn toggle_chords<S: Copy>(
+    shortcuts: &Shortcuts<S>,
+    chord: impl Fn(S) -> Chord,
+) -> impl Iterator<Item = (Toggle, Chord)> {
+    shortcuts
+        .toggles
+        .iter()
+        .map(move |(toggle, shortcut)| (toggle, chord(shortcut)))
 }
 
 #[cfg(any(target_os = "windows", test))]
 #[derive(Default)]
 pub(super) struct Windows {
-    shortcut: crate::WindowsShortcut,
+    shortcuts: Shortcuts<crate::WindowsShortcut>,
     pressed: Option<Instant>,
-    chord: Chord,
-    chord_keys_down: [bool; 5],
+    talk: Talk,
+    /// Modifier keys seen down, corrected by async key state.
+    modifiers: Pressed,
+    /// The talk shortcut's key, claimed by a press that completed the shortcut.
+    key_claimed: bool,
+    toggle_key: ToggleKey,
     taps: ShiftTaps,
     keys: HeldKeys,
 }
@@ -433,16 +499,8 @@ impl Windows {
     const ALT: u16 = 0x12;
     const AREA: u16 = 0x41;
     const CAPS_LOCK: u16 = 0x14;
-    const CHORD_KEYS: [u16; 5] = [
-        Self::LEFT_CONTROL,
-        Self::RIGHT_CONTROL,
-        Self::LEFT_WINDOWS,
-        Self::RIGHT_WINDOWS,
-        Self::F13,
-    ];
     const CONTROL: u16 = 0x11;
     const ESCAPE: u16 = 0x1B;
-    const F13: u16 = 0x7C;
     const LEFT_ALT: u16 = 0xA4;
     const LEFT_CONTROL: u16 = 0xA2;
     const LEFT_SHIFT: u16 = 0xA0;
@@ -463,6 +521,16 @@ impl Windows {
         Self::NUM_LOCK,
         Self::SCROLL_LOCK,
     ];
+    const MODIFIER_KEYS: [(u16, Modifier, Side); 8] = [
+        (Self::LEFT_CONTROL, Modifier::Control, Side::Left),
+        (Self::RIGHT_CONTROL, Modifier::Control, Side::Right),
+        (Self::LEFT_ALT, Modifier::Alt, Side::Left),
+        (Self::RIGHT_ALT, Modifier::Alt, Side::Right),
+        (Self::LEFT_SHIFT, Modifier::Shift, Side::Left),
+        (Self::RIGHT_SHIFT, Modifier::Shift, Side::Right),
+        (Self::LEFT_WINDOWS, Modifier::Super, Side::Left),
+        (Self::RIGHT_WINDOWS, Modifier::Super, Side::Right),
+    ];
     const NUM_LOCK: u16 = 0x90;
     const PASTE_LAST: u16 = 0x56;
     const RETURN: u16 = 0x0D;
@@ -473,19 +541,55 @@ impl Windows {
     const SCREEN: u16 = 0x53;
     const SCROLL_LOCK: u16 = 0x91;
     const SHIFT: u16 = 0x10;
-    const SHIFT_KEYS: [u16; 3] = [Self::SHIFT, Self::LEFT_SHIFT, Self::RIGHT_SHIFT];
+    /// Side-less codes, which synthetic input can carry; async key state sets them for either
+    /// side.
+    const SIDELESS_KEYS: [(u16, Modifier); 3] = [
+        (Self::CONTROL, Modifier::Control),
+        (Self::ALT, Modifier::Alt),
+        (Self::SHIFT, Modifier::Shift),
+    ];
     const SPACE: u16 = 0x20;
     const WINDOW: u16 = 0x57;
 
-    pub(super) fn new(shortcut: crate::WindowsShortcut) -> Self {
+    pub(super) fn new(shortcuts: Shortcuts<crate::WindowsShortcut>) -> Self {
         Self {
-            shortcut,
+            shortcuts,
             ..Self::default()
         }
     }
 
     pub(super) fn interrupt(&mut self, input: &InputSender) {
-        self.chord.interrupt_recording(input);
+        self.talk.interrupt_recording(input);
+    }
+
+    /// The modifier a key is, with its side; a side-less code reads as the left key.
+    pub(super) fn modifier_key(key: u16) -> Option<(Modifier, Side)> {
+        Self::MODIFIER_KEYS
+            .into_iter()
+            .find_map(|(code, modifier, side)| (code == key).then_some((modifier, side)))
+            .or_else(|| {
+                Self::SIDELESS_KEYS
+                    .into_iter()
+                    .find_map(|(code, modifier)| (code == key).then_some((modifier, Side::Left)))
+            })
+    }
+
+    /// Modifier keys `down` reports held.
+    ///
+    /// A side-less code counts as the left key only when neither side reads as held.
+    pub(super) fn pressed(down: impl Fn(u16) -> bool) -> Pressed {
+        let sided = Self::MODIFIER_KEYS
+            .into_iter()
+            .filter(|(code, ..)| down(*code))
+            .fold(Pressed::NONE, |pressed, (_, modifier, side)| {
+                pressed.with(modifier, side, true)
+            });
+        Self::SIDELESS_KEYS
+            .into_iter()
+            .filter(|(code, modifier)| down(*code) && !sided.has(*modifier, None))
+            .fold(sided, |pressed, (_, modifier)| {
+                pressed.with(modifier, Side::Left, true)
+            })
     }
 
     pub(super) fn observe(
@@ -496,17 +600,10 @@ impl Windows {
         at: Instant,
     ) -> Decision {
         let key = u16::try_from(key).unwrap_or(u16::MAX);
-        let missed_release = self.reconcile(physical.chord_keys);
+        let missed_release = self.reconcile(physical.pressed);
         let stroke = self.keys.stroke(key, down);
         self.decide(key, stroke, physical, at)
             .after_missed_release(missed_release)
-    }
-
-    fn chord_key_down(&mut self, key: u16) -> Option<&mut bool> {
-        Self::CHORD_KEYS
-            .into_iter()
-            .zip(&mut self.chord_keys_down)
-            .find_map(|(chord_key, down)| (chord_key == key).then_some(down))
     }
 
     pub(super) fn types(key: u32, down: bool, decision: &Decision) -> bool {
@@ -514,46 +611,136 @@ impl Windows {
             && u16::try_from(key).is_ok_and(|key| !Self::MODIFIERS.contains(&key))
     }
 
-    /// Forgets chord keys Windows reports up before this event and ends a hold they broke.
+    /// Forgets modifier keys Windows reports up before this event and ends a hold they broke.
     ///
-    /// F13 is exempt: a swallowed F13 never reaches async key state, so only its own hook events
-    /// establish and end its hold.
-    fn reconcile(&mut self, chord_keys: [bool; 5]) -> bool {
-        for ((key, tracked), physically_down) in Self::CHORD_KEYS
-            .into_iter()
-            .zip(self.chord_keys_down.iter_mut())
-            .zip(chord_keys)
-        {
-            *tracked &= physically_down || key == Self::F13;
-        }
-        self.chord.reconcile(self.chord_held())
+    /// The talk shortcut's own key is exempt: a claimed key never reaches async key state, so only
+    /// its hook events establish and end its hold.
+    fn reconcile(&mut self, pressed: Pressed) -> bool {
+        self.modifiers = self.modifiers.within(pressed);
+        self.talk.reconcile(self.talk_held())
     }
 
-    const fn chord_held(&self) -> bool {
-        self.shortcut.held(self.chord_keys_down)
+    fn talk_held(&self) -> bool {
+        let chord = self.shortcuts.talk.chord();
+        chord.modifiers_held(self.modifiers) && (chord.code().is_none() || self.key_claimed)
     }
 
     fn decide(&mut self, key: u16, stroke: Stroke, physical: Physical, at: Instant) -> Decision {
         let down = stroke != Stroke::Release;
-        // Shift never interrupts a hold, since a Show draws with it.
-        if Self::SHIFT_KEYS.contains(&key) {
-            let pinned = self.taps.shift(down, physical.other_shortcut, at);
-            return Decision::pass(pinned.map(Action::Pin));
+        let chord = self.shortcuts.talk.chord();
+        if let Some((modifier, side)) = Self::modifier_key(key) {
+            let was_down = self.modifiers.has(modifier, Some(side));
+            self.modifiers = self.modifiers.with(modifier, side, down);
+            if chord.uses(modifier, side) {
+                return self.talk_modifier(was_down, down, physical.chord_blocked, at);
+            }
+            // Shift never interrupts a hold, since a Show draws with it.
+            if modifier == Modifier::Shift {
+                let pinned = self.taps.shift(down, physical.held.other_shortcut, at);
+                return Decision::pass(pinned.map(Action::Pin));
+            }
+            self.taps.interrupt();
+            return self.talk.other_key(down);
         }
-        if let Some(decision) = self.chord_key(key, down, physical.chord_blocked, at) {
-            return decision;
+        if chord.code() == Some(key) {
+            if stroke != Stroke::Repeat {
+                self.taps.interrupt();
+            }
+            let completes = chord.modifiers_held(self.modifiers) && !physical.chord_blocked;
+            if completes && stroke == Stroke::Press {
+                self.pressed = Some(at);
+            }
+            let reserved = chord.modifiers().is_empty();
+            if let Some(decision) = talk_key(
+                &mut self.talk,
+                &mut self.key_claimed,
+                stroke,
+                completes,
+                reserved,
+            ) {
+                return decision;
+            }
         }
         self.taps.interrupt();
+        let toggles = toggle_chords(&self.shortcuts, crate::WindowsShortcut::chord);
+        if let Some(decision) = self
+            .toggle_key
+            .observe(toggles, key, stroke, physical.held.set)
+        {
+            return decision;
+        }
         if key == Self::ESCAPE {
             return Decision::pass(down.then_some(Action::Escape));
         }
         let Some(hold_key) = Self::hold_key(key) else {
-            return self.chord.other_key(down);
+            return self.talk.other_key(down);
         };
-        if stroke == Stroke::Press && self.defers_to_applications(at) {
-            return self.chord.application_shortcut(hold_key);
+        if stroke == Stroke::Press && defers_to_applications(chord, self.pressed, at) {
+            return self.talk.application_shortcut(hold_key);
         }
-        self.chord.hold_key(hold_key, stroke)
+        self.talk.hold_key(hold_key, stroke)
+    }
+
+    /// A modifier of the talk shortcut went down or up.
+    ///
+    /// A shortcut with a key starts only from its key, so its modifiers can only end a hold.
+    fn talk_modifier(
+        &mut self,
+        was_down: bool,
+        down: bool,
+        blocked: bool,
+        at: Instant,
+    ) -> Decision {
+        // A shortcut key changing between taps makes a shortcut like Ctrl+Shift; one held through
+        // both taps does not.
+        if was_down != down {
+            self.taps.interrupt();
+        }
+        let pressed = down && !was_down;
+        if pressed {
+            self.pressed = Some(at);
+        }
+        let keyed = self.shortcuts.talk.chord().code().is_some();
+        let action = match (self.talk_held(), pressed) {
+            (false, _) => self.talk.release(),
+            (true, true) if blocked || keyed => None,
+            (true, true) => self.talk.press(),
+            (true, false) => None,
+        };
+        Decision::pass(action)
+    }
+
+    /// What a hook event means to a recording; `held` reports keys down before it.
+    pub(super) fn recorded(key: u32, down: bool, held: impl Fn(u16) -> bool) -> RecordedKey {
+        let Ok(key) = u16::try_from(key) else {
+            return RecordedKey::Ignored;
+        };
+        if let Some((modifier, side)) = Self::modifier_key(key) {
+            return RecordedKey::Modifiers(Self::pressed(held).with(modifier, side, down));
+        }
+        RecordedKey::Key {
+            code: key,
+            escape: key == Self::ESCAPE,
+            stroke: Stroke::new(down, held(key)),
+            implied: None,
+        }
+    }
+
+    /// Notes a key event a recording took, so the next press of a key released meanwhile is not
+    /// read as a repeat.
+    pub(super) fn track(&mut self, key: u32, down: bool) {
+        let key = u16::try_from(key).unwrap_or(u16::MAX);
+        self.keys.stroke(key, down);
+    }
+
+    /// Whether Win or Alt is held once this event lands. Released with no other key, Win opens
+    /// Start and Alt a menu bar, so a shortcut that used one must mark it used.
+    pub(super) fn menu_held(key: u32, down: bool, held: impl Fn(u16) -> bool) -> bool {
+        let pressed = match u16::try_from(key).ok().and_then(Self::modifier_key) {
+            Some((modifier, side)) => Self::pressed(held).with(modifier, side, down),
+            None => Self::pressed(held),
+        };
+        pressed.has(Modifier::Super, None) || pressed.has(Modifier::Alt, None)
     }
 
     const fn hold_key(key: u16) -> Option<HoldKey> {
@@ -567,93 +754,24 @@ impl Windows {
             _ => None,
         }
     }
-
-    fn chord_key(
-        &mut self,
-        key: u16,
-        down: bool,
-        other_shortcut: bool,
-        at: Instant,
-    ) -> Option<Decision> {
-        if !self.shortcut.holds(key) {
-            return None;
-        }
-        let was_down = mem::replace(self.chord_key_down(key)?, down);
-        // A chord key changing between taps makes a shortcut like Ctrl+Shift; one held through
-        // both taps does not.
-        if was_down != down {
-            self.taps.interrupt();
-        }
-        let pressed = down && !was_down;
-        if pressed {
-            self.pressed = Some(at);
-        }
-        let action = match (self.chord_held(), pressed) {
-            (false, _) => self.chord.release(),
-            (true, true) if other_shortcut => None,
-            (true, true) => self.chord.press(),
-            (true, false) => None,
-        };
-        Some(if self.shortcut == crate::WindowsShortcut::F13 {
-            Decision::swallow(action)
-        } else {
-            Decision::pass(action)
-        })
-    }
-
-    fn defers_to_applications(&self, at: Instant) -> bool {
-        self.shortcut == crate::WindowsShortcut::RightControl
-            && self
-                .pressed
-                .is_none_or(|pressed| at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT)
-    }
 }
 
 #[cfg(any(target_os = "macos", test))]
 impl crate::MacShortcut {
-    pub(super) const fn key_code(self) -> i64 {
-        match self {
-            Self::Function => Mac::FUNCTION,
-            Self::RightOption => Mac::RIGHT_OPTION,
-            Self::RightCommand => Mac::RIGHT_COMMAND,
-            Self::F13 => Mac::F13,
-        }
-    }
-
-    /// The low bits are side-specific device flags beside the aggregate `CGEvent` masks.
-    ///
-    /// Only the chosen right modifier is excluded; its left sibling must still interrupt a hold.
-    pub(super) const fn modifiers(self, flags: u64) -> Modifiers {
-        const LEFT_COMMAND: u64 = 0x08;
-        const RIGHT_COMMAND: u64 = 0x10;
-        const LEFT_OPTION: u64 = 0x20;
-        const RIGHT_OPTION: u64 = 0x40;
-        const SHIFT: u64 = 0x0002_0000;
-        const CONTROL: u64 = 0x0004_0000;
-        const OPTION: u64 = 0x0008_0000;
-        const COMMAND: u64 = 0x0010_0000;
-        const FUNCTION: u64 = 0x0080_0000;
-        // F13 events carry the Fn flag, which must not count as another shortcut.
-        let flags = if matches!(self, Self::F13) {
-            flags & !FUNCTION
+    /// What an event's flags mean for this talk shortcut.
+    pub(super) fn modifiers(self, flags: u64) -> Modifiers {
+        let chord = self.chord();
+        let pressed = Mac::pressed(flags);
+        // macOS sets the Fn flag on function and arrow keys, so it is not another modifier for a
+        // shortcut with a key and no Fn. Toggles get every flag: each drops an Fn it lacks itself.
+        let talk = if chord.code().is_some() && !chord.modifiers().contains(Modifier::Function) {
+            pressed.without(Modifier::Function)
         } else {
-            flags
+            pressed
         };
-        let (talk_mask, own_group, opposite) = match self {
-            Self::Function => (FUNCTION, FUNCTION, 0),
-            Self::RightOption => (RIGHT_OPTION, OPTION, LEFT_OPTION),
-            Self::RightCommand => (RIGHT_COMMAND, COMMAND, LEFT_COMMAND),
-            Self::F13 => (0, 0, 0),
-        };
-        let talk = flags & talk_mask != 0;
-        let others = CONTROL | OPTION | COMMAND | FUNCTION;
-        let other_shortcut = flags & (others & !own_group) != 0
-            || flags & opposite != 0
-            || (!talk && flags & own_group != 0);
         Modifiers {
-            shift: flags & SHIFT != 0,
-            talk,
-            other_shortcut,
+            set: pressed.modifiers(),
+            ..Modifiers::of(chord, talk)
         }
     }
 }
@@ -677,20 +795,19 @@ pub(super) enum MacEvent {
 impl MacEvent {
     /// Whether the shortcut was held before this event.
     ///
-    /// The shortcut's own flag change reports its new state. Other events can carry synthetic
-    /// flags, so an apparent release is confirmed against physical key state.
-    fn held_before(
-        &self,
-        shortcut: crate::MacShortcut,
-        keyboard_held: impl FnOnce() -> bool,
-    ) -> bool {
+    /// A flag change of the shortcut's own modifier reports its new state. Other events can carry
+    /// synthetic flags, so an apparent release is confirmed against physical key state.
+    fn held_before(&self, chord: Chord, keyboard_held: impl FnOnce() -> bool) -> bool {
         match *self {
             Self::Key {
                 code, down, repeat, ..
-            } if shortcut == crate::MacShortcut::F13 && code == shortcut.key_code() => {
-                !down || repeat
+            } if Mac::is_key(chord, code) => !down || repeat,
+            Self::FlagsChanged { code, held }
+                if Mac::modifier_key(code)
+                    .is_some_and(|(modifier, side)| chord.uses(modifier, side)) =>
+            {
+                !held.talk
             },
-            Self::FlagsChanged { code, held } if code == shortcut.key_code() => !held.talk,
             Self::Key { held, .. } | Self::FlagsChanged { held, .. } => {
                 held.talk || keyboard_held()
             },
@@ -701,9 +818,11 @@ impl MacEvent {
 #[cfg(any(target_os = "macos", test))]
 #[derive(Default)]
 pub(super) struct Mac {
-    shortcut: crate::MacShortcut,
+    shortcuts: Shortcuts<crate::MacShortcut>,
     pressed: Option<Instant>,
-    chord: Chord,
+    talk: Talk,
+    key_claimed: bool,
+    toggle_key: ToggleKey,
     taps: ShiftTaps,
 }
 
@@ -711,44 +830,114 @@ pub(super) struct Mac {
 impl Mac {
     const AREA: i64 = 0;
     const ESCAPE: i64 = 53;
-    const F13: i64 = 105;
-    const FUNCTION: i64 = 63;
     /// Some keyboards, and remappers such as Karabiner-Elements, send the Globe key as this key
     /// beside Fn's flag change; it is Fn itself, never another key or typing.
     const GLOBE: i64 = 179;
     const KEYPAD_ENTER: i64 = 76;
-    const LEFT_COMMAND: i64 = 55;
-    const LEFT_CONTROL: i64 = 59;
-    const LEFT_OPTION: i64 = 58;
-    const LEFT_SHIFT: i64 = 56;
+    const MODIFIER_KEYS: [(i64, Modifier, Side); 9] = [
+        (59, Modifier::Control, Side::Left),
+        (62, Modifier::Control, Side::Right),
+        (58, Modifier::Alt, Side::Left),
+        (61, Modifier::Alt, Side::Right),
+        (56, Modifier::Shift, Side::Left),
+        (60, Modifier::Shift, Side::Right),
+        (55, Modifier::Super, Side::Left),
+        (54, Modifier::Super, Side::Right),
+        (63, Modifier::Function, Side::Left),
+    ];
     const PASTE_LAST: i64 = 9;
     const RETURN: i64 = 36;
-    const RIGHT_COMMAND: i64 = 54;
-    const RIGHT_CONTROL: i64 = 62;
-    const RIGHT_OPTION: i64 = 61;
-    const RIGHT_SHIFT: i64 = 60;
     const SCREEN: i64 = 1;
-    const SHORTCUT_MODIFIERS: [i64; 7] = [
-        Self::FUNCTION,
-        Self::LEFT_COMMAND,
-        Self::RIGHT_COMMAND,
-        Self::LEFT_OPTION,
-        Self::RIGHT_OPTION,
-        Self::LEFT_CONTROL,
-        Self::RIGHT_CONTROL,
-    ];
     const SPACE: i64 = 49;
     const WINDOW: i64 = 13;
 
-    pub(super) fn new(shortcut: crate::MacShortcut) -> Self {
+    pub(super) fn new(shortcuts: Shortcuts<crate::MacShortcut>) -> Self {
         Self {
-            shortcut,
+            shortcuts,
             ..Self::default()
         }
     }
 
     pub(super) fn interrupt(&mut self, input: &InputSender) {
-        self.chord.interrupt_recording(input);
+        self.talk.interrupt_recording(input);
+    }
+
+    pub(super) fn modifier_key(code: i64) -> Option<(Modifier, Side)> {
+        Self::MODIFIER_KEYS
+            .into_iter()
+            .find_map(|(key, modifier, side)| (key == code).then_some((modifier, side)))
+    }
+
+    /// Modifier keys an event's flags report held.
+    ///
+    /// The low bits are side-specific device flags beside the aggregate `CGEvent` masks. A
+    /// modifier whose aggregate flag is set without either side reads as its left key.
+    pub(super) fn pressed(flags: u64) -> Pressed {
+        const SIDES: [(u64, u64, u64, Modifier); 4] = [
+            (0x0004_0000, 0x01, 0x2000, Modifier::Control),
+            (0x0002_0000, 0x02, 0x04, Modifier::Shift),
+            (0x0010_0000, 0x08, 0x10, Modifier::Super),
+            (0x0008_0000, 0x20, 0x40, Modifier::Alt),
+        ];
+        const FUNCTION: u64 = 0x0080_0000;
+        SIDES
+            .into_iter()
+            .fold(
+                Pressed::NONE,
+                |pressed, (aggregate, left, right, modifier)| {
+                    let right_down = flags & right != 0;
+                    let left_down = flags & left != 0 || (flags & aggregate != 0 && !right_down);
+                    pressed.with(modifier, Side::Left, left_down).with(
+                        modifier,
+                        Side::Right,
+                        right_down,
+                    )
+                },
+            )
+            .with(Modifier::Function, Side::Left, flags & FUNCTION != 0)
+    }
+
+    fn is_key(chord: Chord, code: i64) -> bool {
+        chord.code().is_some_and(|key| i64::from(key) == code)
+    }
+
+    /// Whether every key of a talk shortcut reads as down by `key_down`, which reports HID key
+    /// state; it confirms a hold when an event's flags may be synthetic.
+    pub(super) fn chord_down(chord: Chord, key_down: impl Fn(u16) -> bool) -> bool {
+        let modifier_down = |modifier| {
+            Self::MODIFIER_KEYS.into_iter().any(|(code, key, side)| {
+                key == modifier
+                    && chord.side().is_none_or(|chosen| chosen == side)
+                    && u16::try_from(code).is_ok_and(&key_down)
+            })
+        };
+        chord.modifiers().iter().all(modifier_down) && chord.code().is_none_or(key_down)
+    }
+
+    /// What a tap event means to a recording, with the flags Core Graphics reports on it.
+    /// Whether macOS sets the Fn flag on this key itself: function, arrow, and navigation keys.
+    const fn sets_function(key: u16) -> bool {
+        matches!(
+            key,
+            64 | 79 | 80 | 90 | 96..=101 | 103 | 105..=107 | 109 | 111 | 113..=126
+        )
+    }
+
+    pub(super) fn recorded(event: MacEvent, flags: u64) -> RecordedKey {
+        match event {
+            MacEvent::FlagsChanged { .. } => RecordedKey::Modifiers(Self::pressed(flags)),
+            MacEvent::Key {
+                code: Self::GLOBE, ..
+            } => RecordedKey::Ignored,
+            MacEvent::Key {
+                code, down, repeat, ..
+            } => u16::try_from(code).map_or(RecordedKey::Ignored, |key| RecordedKey::Key {
+                code: key,
+                escape: code == Self::ESCAPE,
+                stroke: Stroke::new(down, repeat),
+                implied: Self::sets_function(key).then_some(Modifier::Function),
+            }),
+        }
     }
 
     pub(super) fn observe(
@@ -757,10 +946,9 @@ impl Mac {
         keyboard_held: impl FnOnce() -> bool,
         at: Instant,
     ) -> Decision {
-        let missed_release = self.chord.awaits_release()
-            && self
-                .chord
-                .reconcile(event.held_before(self.shortcut, keyboard_held));
+        let chord = self.shortcuts.talk.chord();
+        let missed_release = self.talk.awaits_release()
+            && self.talk.reconcile(event.held_before(chord, keyboard_held));
         self.decide(event, at).after_missed_release(missed_release)
     }
 
@@ -770,45 +958,60 @@ impl Mac {
     }
 
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
+        let chord = self.shortcuts.talk.chord();
         match event {
             MacEvent::Key {
                 code,
                 down,
                 repeat,
                 held,
-            } if self.shortcut == crate::MacShortcut::F13 && code == self.shortcut.key_code() => {
-                if !repeat {
+            } if Self::is_key(chord, code) => {
+                let stroke = Stroke::new(down, repeat);
+                if stroke != Stroke::Repeat {
                     self.taps.interrupt();
                 }
-                Decision::swallow(if !down {
-                    self.chord.release()
-                } else if repeat || held.other_shortcut {
-                    None
-                } else {
-                    self.chord.press()
-                })
+                let completes = (chord.modifiers().is_empty() || held.talk) && !held.other_shortcut;
+                if completes && stroke == Stroke::Press {
+                    self.pressed = Some(at);
+                }
+                let reserved = chord.modifiers().is_empty();
+                talk_key(
+                    &mut self.talk,
+                    &mut self.key_claimed,
+                    stroke,
+                    completes,
+                    reserved,
+                )
+                .unwrap_or_else(|| self.key(code, stroke, held, at))
             },
-            MacEvent::FlagsChanged { code, held } if code == self.shortcut.key_code() => {
+            MacEvent::FlagsChanged { code, held }
+                if Self::modifier_key(code)
+                    .is_some_and(|(modifier, side)| chord.uses(modifier, side)) =>
+            {
                 self.taps.interrupt();
+                // A shortcut with a key starts only from its key, so its modifiers only end it.
+                if chord.code().is_some() {
+                    return Decision::pass(if held.talk { None } else { self.talk.release() });
+                }
                 self.pressed = held.talk.then_some(at);
                 Decision::pass(if held.talk && held.other_shortcut {
                     None
                 } else if held.talk {
-                    self.chord.press()
+                    self.talk.press()
                 } else {
-                    self.chord.release()
+                    self.talk.release()
                 })
             },
-            MacEvent::FlagsChanged {
-                code: Self::LEFT_SHIFT | Self::RIGHT_SHIFT,
-                held,
-            } => {
+            MacEvent::FlagsChanged { code, held }
+                if Self::modifier_key(code)
+                    .is_some_and(|(modifier, _)| modifier == Modifier::Shift) =>
+            {
                 let pinned = self.taps.shift(held.shift, held.other_shortcut, at);
                 Decision::pass(pinned.map(Action::Pin))
             },
-            MacEvent::FlagsChanged { code, held } if Self::SHORTCUT_MODIFIERS.contains(&code) => {
+            MacEvent::FlagsChanged { code, held } if Self::modifier_key(code).is_some() => {
                 self.taps.interrupt();
-                self.chord.other_key(held.other_shortcut)
+                self.talk.other_key(held.other_shortcut)
             },
             MacEvent::FlagsChanged { .. } => {
                 self.taps.interrupt();
@@ -816,21 +1019,37 @@ impl Mac {
             },
             MacEvent::Key {
                 code: Self::GLOBE, ..
-            } if self.shortcut == crate::MacShortcut::Function => Decision::pass(None),
+            } if chord.modifiers().contains(Modifier::Function) => Decision::pass(None),
             MacEvent::Key {
-                code, down, repeat, ..
-            } => {
-                self.taps.interrupt();
-                let stroke = Stroke::new(down, repeat);
-                match Self::hold_key(code) {
-                    Some(key) if stroke == Stroke::Press && self.defers_to_applications(at) => {
-                        self.chord.application_shortcut(key)
-                    },
-                    Some(key) => self.chord.hold_key(key, stroke),
-                    None if code == Self::ESCAPE => Decision::pass(down.then_some(Action::Escape)),
-                    None => self.chord.other_key(down),
-                }
+                code,
+                down,
+                repeat,
+                held,
+            } => self.key(code, Stroke::new(down, repeat), held, at),
+        }
+    }
+
+    /// A key outside the talk shortcut: a toggle's, a hold key, Esc, or another that interrupts.
+    fn key(&mut self, code: i64, stroke: Stroke, held: Modifiers, at: Instant) -> Decision {
+        self.taps.interrupt();
+        let toggles = toggle_chords(&self.shortcuts, crate::MacShortcut::chord);
+        if let Ok(key) = u16::try_from(code)
+            && let Some(decision) = self.toggle_key.observe(toggles, key, stroke, held.set)
+        {
+            return decision;
+        }
+        let chord = self.shortcuts.talk.chord();
+        match Self::hold_key(code) {
+            Some(key)
+                if stroke == Stroke::Press && defers_to_applications(chord, self.pressed, at) =>
+            {
+                self.talk.application_shortcut(key)
             },
+            Some(key) => self.talk.hold_key(key, stroke),
+            None if code == Self::ESCAPE => {
+                Decision::pass((stroke != Stroke::Release).then_some(Action::Escape))
+            },
+            None => self.talk.other_key(stroke != Stroke::Release),
         }
     }
 
@@ -845,14 +1064,153 @@ impl Mac {
             _ => None,
         }
     }
+}
 
-    fn defers_to_applications(&self, at: Instant) -> bool {
-        matches!(
-            self.shortcut,
-            crate::MacShortcut::RightOption | crate::MacShortcut::RightCommand
-        ) && self
-            .pressed
-            .is_none_or(|pressed| at.saturating_duration_since(pressed) < APPLICATION_SHORTCUT)
+/// Records the next shortcut pressed while every shortcut waits.
+///
+/// Modifier keys pass through, so apps never see one stuck down; any other key is swallowed and
+/// ends the recording, and Esc alone cancels it.
+#[derive(Default)]
+pub(super) struct Recorder {
+    held: Pressed,
+    /// Every modifier held since the recording began, for a shortcut of modifiers alone.
+    peak: Pressed,
+}
+
+impl Recorder {
+    /// Modifier keys now `held`; releasing every one records those held.
+    pub(super) fn modifiers(&mut self, held: Pressed) -> Recorded {
+        self.held = held;
+        self.peak = self.peak.union(held);
+        if held.is_empty() && !self.peak.is_empty() {
+            return Self::chosen(self.peak, None);
+        }
+        Recorded::Holding(
+            Chord::recorded(held.modifiers(), held.single(), None).map(NativeShortcut::new),
+        )
+    }
+
+    /// A fresh press of a key that is not a modifier, which ends the recording.
+    ///
+    /// A modifier the system sets on the key itself is left out, so F5 records as F5 whether or
+    /// not the keyboard needed Fn to send it.
+    pub(super) fn key(&self, code: u16, escape: bool, implied: Option<Modifier>) -> Recorded {
+        if escape && self.held.is_empty() {
+            return Recorded::Cancelled;
+        }
+        let held = implied.map_or(self.held, |modifier| self.held.without(modifier));
+        Self::chosen(held, Some(code))
+    }
+
+    fn chosen(held: Pressed, key: Option<u16>) -> Recorded {
+        let sided = key.is_none().then(|| held.single()).flatten();
+        Chord::recorded(held.modifiers(), sided, key).map_or(Recorded::Cancelled, |chord| {
+            Recorded::Chosen(NativeShortcut::new(chord))
+        })
+    }
+}
+
+/// A key event as a recording sees it.
+#[derive(Clone, Copy)]
+pub(super) enum RecordedKey {
+    /// The modifier keys held once the event lands.
+    Modifiers(Pressed),
+    Key {
+        code: u16,
+        escape: bool,
+        stroke: Stroke,
+        /// A modifier the system sets on this key itself, as macOS sets Fn on F5.
+        implied: Option<Modifier>,
+    },
+    /// Part of another key, as the Globe key is part of Fn.
+    Ignored,
+}
+
+/// A shortcut recording Settings started, which the native key callback serves.
+///
+/// While one runs, keys go to it instead of the shortcuts.
+#[derive(Default)]
+pub(crate) struct Recording(
+    #[expect(
+        clippy::disallowed_types,
+        reason = "Settings starts and stops a recording on the UI thread while the native key callback serves it on the input thread, which has no channel to receive it on"
+    )]
+    Mutex<Slot>,
+);
+
+#[derive(Default)]
+enum Slot {
+    #[default]
+    Idle,
+    Listening(Recorder, Sender<Recorded>),
+    /// The key that ended a recording, withheld through its release as its press was, so the
+    /// focused app sees neither its repeats nor a release without a press.
+    Releasing(u16),
+}
+
+impl Recording {
+    /// Starts a fresh recording, ending any other.
+    ///
+    /// The receiver reports the keys held, then the result, and closes when the recording ends.
+    /// Dropping it ends the recording before the next key.
+    pub(crate) fn start(&self) -> Receiver<Recorded> {
+        let (sender, receiver) = async_channel::unbounded();
+        *self.lock() = Slot::Listening(Recorder::default(), sender);
+        receiver
+    }
+
+    /// Offers a key event to a running recording: whether to swallow it, or `None` when none runs
+    /// and the shortcuts decide.
+    ///
+    /// Only a fresh press of a key that is not a modifier is swallowed, with that key's repeats and
+    /// release after it. Other releases and repeats may belong to a key held from before the
+    /// recording, which the app that saw it go down needs.
+    pub(super) fn observe(&self, key: RecordedKey) -> Option<bool> {
+        // The slot stays locked until the recording ends, so a newer recording Settings started
+        // meanwhile survives.
+        let mut slot = self.lock();
+        let (next, swallow) = match (&mut *slot, key) {
+            (Slot::Releasing(released), RecordedKey::Key { code, stroke, .. })
+                if *released == code =>
+            {
+                match stroke {
+                    Stroke::Repeat => return Some(true),
+                    Stroke::Release => (Slot::Idle, Some(true)),
+                    // Its release went missing, so the shortcuts own the key again.
+                    Stroke::Press => (Slot::Idle, None),
+                }
+            },
+            (Slot::Idle | Slot::Releasing(_), _) => return None,
+            (Slot::Listening(_, events), _) if events.is_closed() => (Slot::Idle, None),
+            (Slot::Listening(recorder, events), key) => {
+                let (outcome, released) = match key {
+                    RecordedKey::Modifiers(held) => (recorder.modifiers(held), None),
+                    RecordedKey::Key {
+                        code,
+                        escape,
+                        stroke: Stroke::Press,
+                        implied,
+                    } => (recorder.key(code, escape, implied), Some(code)),
+                    RecordedKey::Key { .. } | RecordedKey::Ignored => return Some(false),
+                };
+                let last = !matches!(outcome, Recorded::Holding(_));
+                // A closed receiver means Settings stopped listening.
+                if events.try_send(outcome).is_ok() && !last {
+                    return Some(false);
+                }
+                (
+                    released.map_or(Slot::Idle, Slot::Releasing),
+                    Some(released.is_some()),
+                )
+            },
+        };
+        *slot = next;
+        swallow
+    }
+
+    /// Ignores poison: a recording holds no invariant a panic mid-update could break.
+    fn lock(&self) -> MutexGuard<'_, Slot> {
+        self.0.lock().unwrap_or_else(PoisonError::into_inner)
     }
 }
 

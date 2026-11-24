@@ -250,8 +250,8 @@ impl Settings {
 
     fn banner(&self, ui: &Ui<'_>) -> Option<Div> {
         let kit = ui.kit();
-        if self.unreadable {
-            return Some(self.unreadable_banner(ui));
+        if let Some(error) = &self.unreadable {
+            return Some(self.unreadable_banner(error, ui));
         }
         if is_demo(ui.cx) {
             return Some(kit.banner(
@@ -337,7 +337,7 @@ impl Settings {
             .is_some_and(|permissions| permissions::blocked(permissions.microphone))
     }
 
-    fn unreadable_banner(&self, ui: &Ui<'_>) -> Div {
+    fn unreadable_banner(&self, error: &str, ui: &Ui<'_>) -> Div {
         let path = &ui.cx.global::<Services>().path;
         let file = path.file_name().map_or_else(
             || path.display().to_string(),
@@ -347,9 +347,17 @@ impl Settings {
             Tone::Warn,
             "Settings can't be read",
             format!(
-                "Speakeasy can't read {file}, often because another version wrote it. Fix the error and restart, or start over: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
+                "Speakeasy can't read {file}: {error}. This often happens after another version writes it. Edit the file and restart, or start over: Speakeasy removes its settings and downloads, then downloads Parakeet again. Your Shows stay."
             ),
-            Some(self.reset_controls(ui)),
+            Some(
+                div()
+                    .flex()
+                    .flex_wrap()
+                    .items_center()
+                    .gap(px(8.0))
+                    .child(ui.button("Open settings folder", Action::SettingsFile, Weight::Quiet))
+                    .child(self.reset_controls(ui)),
+            ),
         )
     }
 
@@ -479,7 +487,7 @@ fn setup_progress(ui: &Ui<'_>, progress: Progress, detail: impl Into<SharedStrin
                 .items_center()
                 .gap(px(12.0))
                 .child(kit.detail(detail).flex_1())
-                .child(ui.button("Cancel", Action::Setup, Weight::Quiet)),
+                .child(ui.button("Pause download", Action::Setup, Weight::Quiet)),
         )
 }
 
@@ -495,10 +503,15 @@ fn progress_text(progress: Progress) -> String {
         Progress::Step(step) => format!("{step}…"),
         Progress::Bytes { step, done, total } => format!(
             "{step} · {} of {} MB",
-            done / 1_000_000,
-            total.get() / 1_000_000
+            megabytes(done),
+            megabytes(total.get())
         ),
     }
+}
+
+/// Rounded to the nearest megabyte, as the model sizes elsewhere in Settings are.
+const fn megabytes(bytes: u64) -> u64 {
+    bytes.saturating_add(500_000) / 1_000_000
 }
 
 fn cycle_focus(event: &KeyDownEvent, window: &mut Window, cx: &mut App) {

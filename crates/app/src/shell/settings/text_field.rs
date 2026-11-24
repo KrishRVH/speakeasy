@@ -551,7 +551,7 @@ impl Render for TextField {
                                     );
                                     let failed = input.paint_text(&layout, window, cx).is_err();
                                     if failed && input.problem.is_none() {
-                                        input.problem = Some("Cannot render this phrase.");
+                                        input.problem = Some("Can't render this phrase.");
                                         cx.notify();
                                     }
                                     input.layout = Some(layout);

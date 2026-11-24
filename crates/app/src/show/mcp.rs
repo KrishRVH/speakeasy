@@ -67,7 +67,7 @@ impl Command {
             Self::Help => writeln!(out, "{HELP}")?,
             Self::Setup => setup(
                 crate::paths::command(),
-                &super::store::directory().context("Cannot resolve the default Shows folder")?,
+                &super::store::directory().context("Can't resolve the default Shows folder")?,
                 speakeasy_platform::wsl().as_ref(),
                 out,
             )?,
@@ -92,7 +92,7 @@ fn setup(
     out: &mut impl io::Write,
 ) -> anyhow::Result<()> {
     let executable = executable.context(
-        "Cannot resolve a persistent Speakeasy launcher. Install or move Speakeasy out of its temporary location, then try setup again.",
+        "Can't resolve a persistent Speakeasy launcher. Install or move Speakeasy out of its temporary location, then try setup again.",
     )?;
     let through_interop = wsl.map(|wsl| wsl.command(&executable));
     let executable = executable

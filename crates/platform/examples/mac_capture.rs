@@ -110,7 +110,7 @@ mod native {
         result?;
         source
             .stop()
-            .context("Cannot stop the synthetic capture source")?;
+            .context("Can't stop the synthetic capture source")?;
         writeln!(
             io::stdout().lock(),
             "Owned Mac capture passed: changing pixels, exclusion, timestamps, stop and restart"

@@ -219,7 +219,7 @@ impl NativeWindow {
             {
                 RemovePropW(hwnd, HIDE_LANE);
                 drop(Box::from_raw(lane));
-                bail!("Cannot enable minimize to tray. Restart Speakeasy.");
+                bail!("Can't enable minimize to tray. Restart Speakeasy.");
             }
         }
         Ok(())

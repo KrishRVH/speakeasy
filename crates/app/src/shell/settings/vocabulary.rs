@@ -236,7 +236,7 @@ impl Settings {
                         .practiced
                         .update(cx, |field, cx| field.set_text(String::new(), cx));
                     self.notice = Some(Notice::Note(
-                        "Correction added. Practice again to hear it.".into(),
+                        "Correction added. Practice again to see it.".into(),
                     ));
                     self.navigation
                         .tab(super::navigation::Page::Dictation)

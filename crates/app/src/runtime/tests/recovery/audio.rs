@@ -111,7 +111,7 @@ async fn reopening_failure_reaches_the_library_receipt_with_its_remedy() -> anyh
         .recover(interrupted.clone())
         .map_err(anyhow::Error::msg)?;
     let message = timeout(PATIENCE, receipt).await??.unwrap_err();
-    assert!(message.starts_with("Cannot recover this Show:"));
+    assert!(message.starts_with("Can't recover this Show:"));
     assert!(message.contains("No complete frame survived. Discard this interrupted Show."));
     h.phase(Phase::Error).await?;
     h.close().await?;
