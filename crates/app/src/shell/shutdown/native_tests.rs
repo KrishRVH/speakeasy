@@ -37,7 +37,7 @@ fn handoff(quit: Quit) -> anyhow::Result<()> {
         let pill = crate::pill::open(
             snapshots,
             levels,
-            || false,
+            crate::pill::Keyboard::QUIET,
             true,
             config.theme,
             crate::pill::Opening::Startup,
