@@ -19,7 +19,10 @@ fn rebind(config: &Config) -> Config {
             WindowsShortcut::F13
         },
         mac_toggles: Toggles {
-            hands_free: config.mac_toggles.hands_free.xor(Some(MacShortcut::RIGHT_OPTION)),
+            hands_free: config
+                .mac_toggles
+                .hands_free
+                .xor(Some(MacShortcut::RIGHT_OPTION)),
             ..config.mac_toggles
         },
         windows_toggles: Toggles {
