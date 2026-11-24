@@ -59,6 +59,7 @@ impl Drop for Exclusions {
         }
     }
 }
+
 pub(super) fn top_level_windows() -> windows::core::Result<Vec<HWND>> {
     unsafe extern "system" fn collect(window: HWND, found: LPARAM) -> BOOL {
         // SAFETY: `found` is the vector `top_level_windows` lends for the whole enumeration.

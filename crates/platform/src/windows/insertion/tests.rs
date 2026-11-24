@@ -94,6 +94,7 @@ fn copies_stay_out_of_history_and_a_restore_keeps_a_newer_copy() -> anyhow::Resu
 
     Ok(())
 }
+
 #[test]
 #[ignore = "Subprocess helper; does nothing unless copies_stay_out_of_history_and_a_restore_keeps_a_newer_copy starts it"]
 fn check_on_a_private_window_station() -> anyhow::Result<()> {
@@ -129,6 +130,7 @@ fn assert_previous(html: NonZeroU32, source: &str) -> anyhow::Result<()> {
     );
     Ok(())
 }
+
 fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<()> {
     let html = clipboard_win::raw::register_format("HTML Format")
         .context("Can't register a clipboard format")?;
