@@ -166,9 +166,9 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   Show between sessions, finishes any Show under way, and during dictation, the wait after one tap
   included, turns it into its Show as S, W, or A would; a tray Show leaves dictation alone.
 - Recording a shortcut takes the next keys pressed, while dictation runs and no session is under
-  way. Modifiers still reach apps; the first other key ends the recording and is withheld through
-  its release, and Esc alone cancels it. Choosing anything else in Settings, or switching away from
-  it, stops the recording.
+  way. Modifiers still reach apps, and releasing them with no other key records them alone; the
+  first other key ends the recording and is withheld through its release, and Esc alone cancels it.
+  Choosing anything else in Settings, or switching away from it, stops the recording.
 - On Windows/macOS, the talk shortcut's modifiers are observed, never swallowed. Its key, if it has
   one, is withheld from the press that completes the shortcut through its release, and a key alone,
   such as F13, is reserved: its presses, repeats, and releases are withheld, and repeats cannot
