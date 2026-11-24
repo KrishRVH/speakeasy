@@ -96,6 +96,8 @@ pub(super) fn start(
 ) -> anyhow::Result<(OwnedThread, Monitor, Inserter)> {
     let shortcuts = options.mac;
     let shortcut = shortcuts.talk;
+    // Text Input Sources answer only on the main thread, so the layout-aware label is read here.
+    let label = shortcut.label();
     let typed = insertion::KeyCount::default();
     let (insertion, inserter) = insertion::Worker::start(input.clone(), own_focus, {
         let typed = typed.clone();
@@ -122,7 +124,7 @@ pub(super) fn start(
     let observers = lifecycle_observers(&input, &policy, &control);
     let thread = OwnedThread::spawn("input-monitor", {
         let control = Arc::clone(&control);
-        move || monitor(&input, &control, &policy)
+        move || monitor(&input, &control, &policy, &label)
     })?;
     let monitor = Monitor {
         control,
@@ -134,6 +136,7 @@ pub(super) fn start(
 
 struct RunLoopReady<'a> {
     shortcut: MacShortcut,
+    label: &'a str,
     control: &'a MonitorControl<CFRunLoop>,
     input: &'a InputSender,
 }
@@ -143,7 +146,7 @@ impl RunLoopReady<'_> {
         let run_loop = CFRunLoop::get_current();
         let started = self.control.start(run_loop.clone(), || {
             self.input.deliver(Input::DesktopReady {
-                shortcut: self.shortcut.label(),
+                shortcut: self.label.to_owned(),
                 cancel: CANCEL_SHORTCUT.into(),
                 globe_shortcut: self.shortcut == MacShortcut::FUNCTION,
             });
@@ -246,9 +249,16 @@ fn lifecycle_observers(
 
 const UNWATCHED: &str = "Can't watch the dictation shortcut. Resume dictation to try again.";
 
-fn monitor(input: &InputSender, control: &MonitorControl<CFRunLoop>, policy: &SharedPolicy) {
-    let watched = panic::catch_unwind(AssertUnwindSafe(|| run_event_loop(input, control, policy)))
-        .unwrap_or_else(|_| Err(anyhow!(UNWATCHED)));
+fn monitor(
+    input: &InputSender,
+    control: &MonitorControl<CFRunLoop>,
+    policy: &SharedPolicy,
+    label: &str,
+) {
+    let watched = panic::catch_unwind(AssertUnwindSafe(|| {
+        run_event_loop(input, control, policy, label)
+    }))
+    .unwrap_or_else(|_| Err(anyhow!(UNWATCHED)));
     if let Err(error) = watched
         && !control.stopping()
         && !input.is_closed()
@@ -267,6 +277,7 @@ fn run_event_loop(
     input: &InputSender,
     control: &MonitorControl<CFRunLoop>,
     policy: &SharedPolicy,
+    label: &str,
 ) -> anyhow::Result<()> {
     if control.stopping() {
         return Ok(());
@@ -283,6 +294,7 @@ fn run_event_loop(
         control,
         input,
         shortcut: policy.shortcut,
+        label,
     };
     let mut context = CFRunLoopObserverContext {
         version: 0,
