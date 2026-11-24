@@ -52,6 +52,7 @@ struct CopyProbe {
     received: bool,
     agent: Option<std::path::PathBuf>,
 }
+
 impl gpui::Global for CopyProbe {}
 
 struct Keeper;
