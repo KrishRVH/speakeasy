@@ -46,7 +46,7 @@ speakeasy show mcp --setup
 speakeasy show skill [--install DIR]
 speakeasy show demo [--out NEW_DIR]
 
-list discovers interrupted and saved Shows, including ones it cannot read.
+list discovers interrupted and saved Shows, including ones it can't read.
 inspect checks an explicit bundle and maps its sheets, keyframes and marks.
 Both print metadata and current absolute paths, never narration or screen content.
 wait inspects the first Show saved after it starts, once you make one with the Show gesture.
@@ -66,7 +66,7 @@ frame --video decodes the retained movie on Windows and macOS, using original se
 It reports actual decoded time and separate annotation coverage, including recovered video tails.
 --annotated adds timed saved ink, pins, and completed actions; reports list omitted annotations.
 It requires geometry and annotation coverage at the decoded sample. --crop needs matching geometry.
-inspect and wait exit with status 1 for a Show they cannot read.
+inspect and wait exit with status 1 for a Show they can't read.
 SHOW is an exact folder-name ID in Speakeasy's Shows folder, or an explicit path.
 Use ./ID to address a relative path. Commands never guess an earlier Show; wait reports a new one.
 keep prevents expiry; --off restores the original seven-day expiry date.
@@ -370,7 +370,7 @@ fn inspect(entry: &recall::Entry, json: bool, out: &mut impl io::Write) -> anyho
     output::inspect(entry, json, out)?;
     anyhow::ensure!(
         entry.show.is_ok(),
-        "Speakeasy cannot read this Show; inspection names the problem."
+        "Speakeasy can't read this Show; inspection names the problem."
     );
     Ok(())
 }

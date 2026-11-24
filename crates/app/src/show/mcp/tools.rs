@@ -47,7 +47,7 @@ pub(super) fn definitions() -> Value {
     let phrase = json!({"type": "string", "minLength": 1, "description": "Phrase in recorded narration, requiring word timings; not edited summary text."});
     let annotations = json!({"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false});
     json!([
-        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside the configured roots, with metadata and a continuation cursor. Roots that cannot be listed are named in unavailableRoots."),
+        {"name": Tool::List.name(), "description": format!("List at most {PAGE} saved Shows inside the configured roots, with metadata and a continuation cursor. Roots that can't be listed are named in unavailableRoots."),
          "inputSchema": {"type": "object", "properties": {"cursor": {"type": "string"}}, "additionalProperties": false}, "annotations": annotations},
         {"name": Tool::Read.name(), "description": format!("Read one exact Show's metadata, contact sheets, keyframes, marks, and edited summary (truncated past {} KiB, and marked so). Optionally include the whole recorded narration as timed rows, and one time, mark, or phrase lookup. Multiple phrase matches stay ambiguous unless match is given.", TEXT_LIMIT >> 10),
          "inputSchema": {"type": "object", "properties": {"show": show, "narration": {"type": "boolean", "default": false}, "at": at, "mark": positive, "phrase": phrase, "match": positive}, "required": ["show"], "additionalProperties": false}, "annotations": annotations},

@@ -772,7 +772,7 @@ impl Review {
                 .child(
                     div()
                         .text_color(rgb(palette.muted))
-                        .child("These words have no timings and cannot point to frames."),
+                        .child("These words have no timings and can't point to frames."),
                 )
                 .child(div().mt(px(8.0)).child(text.clone())),
             Some(Narration::Silent) => div().child("No speech was recorded."),
