@@ -126,7 +126,7 @@ impl encode::Codec for Codec {
         let bytes = u32::try_from(pixels.len())?;
         ensure!(
             statistics.dwByteCountQueued.saturating_add(bytes) <= QUEUED_BYTES,
-            "Video encoding cannot keep up; retained frames remain available"
+            "Video encoding can't keep up; retained frames remain available"
         );
         let at = Self::CLOCK.time(index);
         let through = Self::CLOCK.time(index.saturating_add(1));
