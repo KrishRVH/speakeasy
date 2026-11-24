@@ -131,7 +131,7 @@ impl Metadata {
         let coverage = self
             .coverage
             .as_ref()
-            .context("Movie has no retained coverage")?;
+            .context("Movie has no saved coverage")?;
         let partial = if coverage.partial {
             "Only complete surviving fragments are retained. "
         } else {
@@ -183,7 +183,7 @@ impl Reading {
             .metadata
             .coverage
             .as_ref()
-            .context("Movie has no published coverage")?;
+            .context("Movie has no saved coverage")?;
         anyhow::ensure!(
             coverage.annotations_through_ms == annotations.as_millis(),
             "Movie annotation coverage differs from the Show"

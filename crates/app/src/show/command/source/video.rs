@@ -33,7 +33,7 @@ pub(super) fn frame(
     let coverage = metadata
         .coverage
         .as_ref()
-        .context("Movie has no published coverage")?;
+        .context("Movie has no saved coverage")?;
     let found = focus.resolve_in_video(&manifest)?;
     let at = found
         .selected

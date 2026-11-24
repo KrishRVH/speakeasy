@@ -22,7 +22,7 @@ impl fmt::Display for Unreadable {
                 out,
                 "unsupported Show format version {version}; update Speakeasy to open it"
             ),
-            Self::Malformed(error) => write!(out, "cannot read show.json: {error}"),
+            Self::Malformed(error) => write!(out, "can't read show.json: {error}"),
             Self::Inconsistent(rule) => write!(out, "show.json is inconsistent: {rule}"),
         }
     }

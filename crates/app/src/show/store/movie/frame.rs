@@ -132,7 +132,7 @@ impl Reading {
         let coverage = metadata
             .coverage
             .as_ref()
-            .context("Movie has no published coverage")?;
+            .context("Movie has no saved coverage")?;
         anyhow::ensure!(
             (metadata.origin_ms..=coverage.end_ms).contains(&at.as_millis()),
             "Requested time is outside the retained video coverage"
@@ -160,7 +160,7 @@ impl Reading {
                 .metadata
                 .coverage
                 .as_ref()
-                .context("Movie has no published coverage")?
+                .context("Movie has no saved coverage")?
                 .annotations_through_ms,
         );
         let Some(frame) = speakeasy_platform::read_movie_frame(
@@ -175,7 +175,7 @@ impl Reading {
         };
         anyhow::ensure!(
             frame.at < retained,
-            "Decoded video sample exceeds its retained coverage"
+            "Decoded video frame exceeds its saved coverage"
         );
         Ok(Some(Sample {
             at: Duration::from_millis(movie.metadata.origin_ms).saturating_add(frame.at),

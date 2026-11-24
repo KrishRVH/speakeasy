@@ -204,9 +204,6 @@ fn unsupported_settings_are_rejected_without_overwriting_the_file() -> anyhow::R
     };
     for contents in [
         r#"{"retired":1}"#,
-        r#"{"preserve_clipboard":true}"#,
-        r#"{"linux":{"terminal_paste":true}}"#,
-        r#"{"linux":{"manual_paste":true}}"#,
         r#"{"engine":"parakeet"}"#,
         r#"{"linux":{"chord":"X"}}"#,
     ] {

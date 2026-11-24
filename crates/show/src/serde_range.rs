@@ -14,7 +14,7 @@ pub(crate) fn deserialize<'de, D: Deserializer<'de>>(
 ) -> Result<Range<usize>, D::Error> {
     let [start, end] = <[usize; 2]>::deserialize(deserializer)?;
     if start > end {
-        return Err(D::Error::custom("a range cannot start after it ends"));
+        return Err(D::Error::custom("a range can't start after it ends"));
     }
     Ok(start..end)
 }

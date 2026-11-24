@@ -67,7 +67,7 @@ pub(crate) fn printed_key(code: u16) -> Option<char> {
 
 pub(crate) fn reduced_motion() -> bool {
     let mut animates = TRUE;
-
+    // SAFETY: SPI_GETCLIENTAREAANIMATION writes one BOOL through the pointer, which outlives the call.
     unsafe {
         SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, (&raw mut animates).cast(), 0);
     }
