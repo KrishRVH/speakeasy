@@ -31,22 +31,22 @@ fail() {
 cd "$work"
 case "$package" in
   *-windows-x64.zip)
-    unzip -q "$package" || fail "cannot be unzipped"
+    unzip -q "$package" || fail "can't be unzipped"
     app=./speakeasy-cli.exe
     ;;
   *-macos.zip)
-    unzip -q "$package" || fail "cannot be unzipped"
+    unzip -q "$package" || fail "can't be unzipped"
     app=./Speakeasy.app/Contents/MacOS/speakeasy
     ;;
   *-macos.dmg)
-    hdiutil attach -quiet -readonly -nobrowse -mountpoint "$work/mounted" "$package" || fail "cannot be mounted"
+    hdiutil attach -quiet -readonly -nobrowse -mountpoint "$work/mounted" "$package" || fail "can't be mounted"
     mounted="$work/mounted"
     [[ -L "$mounted/Applications" && "$(readlink "$mounted/Applications")" == /Applications ]] || fail "has no Applications link"
-    ditto "$mounted/Speakeasy.app" "$work/Speakeasy.app" || fail "cannot be copied to a writable folder"
+    ditto "$mounted/Speakeasy.app" "$work/Speakeasy.app" || fail "can't be copied to a writable folder"
     app=./Speakeasy.app/Contents/MacOS/speakeasy
     ;;
   *.tar.gz)
-    tar -xzf "$package" || fail "cannot be extracted"
+    tar -xzf "$package" || fail "can't be extracted"
     app=./Speakeasy.AppDir/AppRun
     ;;
   *)

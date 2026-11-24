@@ -67,7 +67,7 @@ class Display:
         self._x11.XDestroyImage.argtypes = [ctypes.c_void_p]
         display = self._x11.XOpenDisplay(name.encode())
         if display is None:
-            raise RuntimeError("Cannot open the private display")
+            raise RuntimeError("Can't open the private display")
         self._display: int = display
 
     def __enter__(self) -> Self:

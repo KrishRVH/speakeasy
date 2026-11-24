@@ -40,7 +40,7 @@ cp target/release/speakeasy "$bundle/Contents/MacOS/speakeasy"
 cp packaging/macos/Info.plist "$bundle/Contents/Info.plist"
 version=$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml)
 if [[ ! "$version" =~ ^([0-9]+)\.([0-9]{1,2})\.([0-9]{1,2})$ ]]; then
-  echo "Cannot derive bundle versions from the workspace version in Cargo.toml." >&2
+  echo "Can't derive bundle versions from the workspace version in Cargo.toml." >&2
   exit 1
 fi
 # LaunchServices prefers the copy with the highest CFBundleVersion, so it must keep rising;
