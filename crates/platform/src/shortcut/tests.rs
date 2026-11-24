@@ -221,18 +221,13 @@ fn a_character_key_refuses_the_modifiers_that_still_type_with_it() {
 #[test]
 fn a_character_key_shows_what_the_layout_prints_and_a_digit_keeps_its_digit() {
     let azerty = Layout {
-        modifiers: MAC_MODIFIERS,
-        order: MAC.order,
-        keys: MAC.keys,
-        aliases: MAC.aliases,
-        typing: MAC.typing,
-        alt_graph: MAC.alt_graph,
         printed: |code| match code {
             12 => Some('a'),
             1 => Some('ß'),
             18 => Some('&'),
             _ => None,
         },
+        ..MAC
     };
     let label = |key| {
         Chord::recorded(ModifierSet::EMPTY.with(Modifier::Super), None, Some(key))

@@ -421,6 +421,7 @@ enum Kind {
     Reserved,
 }
 
+#[derive(Clone, Copy)]
 struct Named {
     name: &'static str,
     label: &'static str,
@@ -831,31 +832,29 @@ pub enum Refusal {
     Covers(Toggle),
 }
 
-const MAC_MODIFIERS: [Option<Named>; 5] = [
-    Some(Named {
-        name: "control",
-        label: "Control",
-    }),
-    Some(Named {
-        name: "option",
-        label: "Option",
-    }),
-    Some(Named {
-        name: "shift",
-        label: "Shift",
-    }),
-    Some(Named {
-        name: "command",
-        label: "Command",
-    }),
-    Some(Named {
-        name: "function",
-        label: "Fn",
-    }),
-];
-
 static MAC: Layout = Layout {
-    modifiers: MAC_MODIFIERS,
+    modifiers: [
+        Some(Named {
+            name: "control",
+            label: "Control",
+        }),
+        Some(Named {
+            name: "option",
+            label: "Option",
+        }),
+        Some(Named {
+            name: "shift",
+            label: "Shift",
+        }),
+        Some(Named {
+            name: "command",
+            label: "Command",
+        }),
+        Some(Named {
+            name: "function",
+            label: "Fn",
+        }),
+    ],
     order: &[
         Modifier::Function,
         Modifier::Control,
@@ -900,7 +899,8 @@ static WINDOWS: Layout = Layout {
         Modifier::Shift,
     ],
     keys: WINDOWS_KEYS,
-    // Versions through 0.12 saved the default as one name; every new settings file holds it.
+    // Versions through 0.12 saved the default under this one name, so every settings file they
+    // wrote holds it.
     aliases: &[("control_windows", WindowsShortcut::CONTROL_WINDOWS.0)],
     typing: ModifierSet::SHIFT,
     alt_graph: Some(ModifierSet(Modifier::Control.bit() | Modifier::Alt.bit())),
