@@ -638,7 +638,7 @@ impl Services {
     pub(super) fn reset(&mut self, cx: &App) -> anyhow::Result<ResetReceipt> {
         anyhow::ensure!(
             !self.is_quitting() && !self.mode.is_demo() && self.purging.is_none(),
-            "Speakeasy cannot reset right now. Try again in a moment."
+            "Speakeasy can't reset right now. Try again in a moment."
         );
         let (done, receipt) = async_channel::bounded(1);
         let purge = Purge {

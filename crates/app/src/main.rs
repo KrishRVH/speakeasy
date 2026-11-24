@@ -112,7 +112,7 @@ impl Invocation {
             },
             (Some(_), LaunchMode::Live) => bail!("Desktop commands are available on Linux"),
             (Some(_), LaunchMode::Demo | LaunchMode::DemoTray) => {
-                bail!("Desktop commands cannot be combined with a demo")
+                bail!("Desktop commands can't be combined with a demo")
             },
         }
     }
