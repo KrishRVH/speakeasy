@@ -45,11 +45,11 @@ impl LaunchMode {
         matches!(self, Self::Live | Self::DemoTray)
     }
 
-    pub(crate) const fn secure_input(self) -> fn() -> bool {
+    pub(crate) const fn keyboard(self) -> crate::pill::Keyboard {
         if self.is_demo() {
-            || false
+            crate::pill::Keyboard::QUIET
         } else {
-            speakeasy_platform::secure_input
+            crate::pill::Keyboard::NATIVE
         }
     }
 }

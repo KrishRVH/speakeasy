@@ -22,12 +22,17 @@ use std::{
 use anyhow::{Context as _, anyhow, bail, ensure};
 use block2::RcBlock;
 use core_foundation::{
-    base::{TCFType, kCFAllocatorDefault},
+    array::CFArray,
+    base::{CFType, TCFType, kCFAllocatorDefault},
+    boolean::CFBoolean,
+    dictionary::CFDictionary,
     mach_port::CFMachPort,
+    number::CFNumber,
     runloop::{
         CFRunLoop, CFRunLoopActivity, CFRunLoopObserver, CFRunLoopObserverContext,
         CFRunLoopObserverCreate, CFRunLoopObserverRef, kCFRunLoopCommonModes, kCFRunLoopEntry,
     },
+    string::{CFString, CFStringRef},
 };
 use core_graphics::{
     event::{
@@ -39,7 +44,7 @@ use core_graphics::{
 use dispatch2::DispatchQueue;
 use objc2::{MainThreadMarker, MainThreadOnly as _, rc::Retained, runtime::ProtocolObject};
 use objc2_app_kit::{
-    NSAlert, NSEvent, NSFloatingWindowLevel, NSScreen, NSView, NSWindow,
+    NSAlert, NSEvent, NSFloatingWindowLevel, NSRunningApplication, NSScreen, NSView, NSWindow,
     NSWindowCollectionBehavior, NSWindowStyleMask, NSWorkspace,
     NSWorkspaceSessionDidResignActiveNotification, NSWorkspaceWillSleepNotification,
 };
@@ -136,6 +141,7 @@ impl RunLoopReady<'_> {
             self.input.deliver(Input::DesktopReady {
                 shortcut: self.shortcut.label().into(),
                 cancel: CANCEL_SHORTCUT.into(),
+                globe_shortcut: self.shortcut == MacShortcut::Function,
             });
         });
         if !started || self.input.is_closed() {
@@ -724,9 +730,104 @@ unsafe extern "C" {
     fn IsSecureEventInputEnabled() -> u8;
 }
 
-pub(super) fn secure_input() -> bool {
+fn secure_input_on() -> bool {
     // SAFETY: Carbon marks this query not thread safe; the marker proves the main thread.
     MainThreadMarker::new().is_some_and(|_| unsafe { IsSecureEventInputEnabled() } != 0)
+}
+
+pub(super) fn secure_input() -> Option<crate::SecureInput> {
+    secure_input_on().then(|| crate::SecureInput {
+        holder: secure_input_holder(),
+    })
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+unsafe extern "C" {
+    fn CFPreferencesCopyAppValue(key: CFStringRef, application: CFStringRef) -> *const c_void;
+    fn CFPreferencesAppSynchronize(application: CFStringRef) -> u8;
+}
+
+pub(super) fn globe_key() -> Option<crate::GlobeKey> {
+    let key = CFString::from_static_string("AppleFnUsageType");
+    let domain = CFString::from_static_string("com.apple.HIToolbox");
+    // SAFETY: both strings live through the calls, and the value follows the Create rule, so
+    // `CFType` takes its only reference.
+    let value = unsafe {
+        // Rereads the domain, which this process otherwise caches from its first read, so a change
+        // made in System Settings since then counts.
+        let _ = CFPreferencesAppSynchronize(domain.as_concrete_TypeRef());
+        let value =
+            CFPreferencesCopyAppValue(key.as_concrete_TypeRef(), domain.as_concrete_TypeRef());
+        (!value.is_null()).then(|| CFType::wrap_under_create_rule(value))?
+    };
+    match value.downcast::<CFNumber>()?.to_i32()? {
+        1 => Some(crate::GlobeKey::InputSource),
+        2 => Some(crate::GlobeKey::Emoji),
+        3 => Some(crate::GlobeKey::Dictation),
+        _ => None,
+    }
+}
+
+#[link(name = "IOKit", kind = "framework")]
+unsafe extern "C" {
+    fn IORegistryGetRootEntry(main_port: u32) -> u32;
+    fn IORegistryEntryCreateCFProperty(
+        entry: u32,
+        key: CFStringRef,
+        allocator: *const c_void,
+        options: u32,
+    ) -> *const c_void;
+    fn IOObjectRelease(object: u32) -> i32;
+}
+
+/// The app the console session's I/O Registry record names as holding secure input.
+///
+/// The window server keeps that record; `ioreg` shows it as `kCGSSessionSecureInputPID`.
+fn secure_input_holder() -> Option<String> {
+    let key = |name| CFString::from_static_string(name).into_CFType();
+    let (on_console, holder) = (
+        key("kCGSSessionOnConsoleKey"),
+        key("kCGSSessionSecureInputPID"),
+    );
+    let pid = console_sessions()?.iter().find_map(|session| {
+        // SAFETY: `IOConsoleUsers` holds one dictionary per login session, retained by the array.
+        let session =
+            unsafe { CFType::wrap_under_get_rule(*session) }.downcast_into::<CFDictionary>()?;
+        let value = |key: &CFType| {
+            let value = session.find(key.as_CFTypeRef())?;
+            // SAFETY: the dictionary retains its values for this borrow, and `CFType` retains again.
+            Some(unsafe { CFType::wrap_under_get_rule(*value) })
+        };
+        value(&on_console)?
+            .downcast::<CFBoolean>()
+            .is_some_and(bool::from)
+            .then(|| value(&holder)?.downcast::<CFNumber>()?.to_i32())
+            .flatten()
+    })?;
+    let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)?;
+    Some(app.localizedName()?.to_string())
+}
+
+fn console_sessions() -> Option<CFArray> {
+    let key = CFString::from_static_string("IOConsoleUsers");
+    // SAFETY: port 0 names IOKit's default main port. The root entry is released once read, and
+    // the property follows the Create rule, so `CFType` takes its only reference.
+    unsafe {
+        let root = IORegistryGetRootEntry(0);
+        if root == 0 {
+            return None;
+        }
+        let property = IORegistryEntryCreateCFProperty(
+            root,
+            key.as_concrete_TypeRef(),
+            kCFAllocatorDefault.cast(),
+            0,
+        );
+        IOObjectRelease(root);
+        (!property.is_null())
+            .then(|| CFType::wrap_under_create_rule(property))?
+            .downcast_into::<CFArray>()
+    }
 }
 
 const SECURE_INPUT_PATIENCE: Duration = Duration::from_millis(50);
@@ -739,7 +840,7 @@ fn secure_input_from_worker() -> Option<bool> {
             clippy::let_underscore_must_use,
             reason = "A worker that stopped waiting dropped its receiver and already treats the answer as unknown"
         )]
-        let _ = reply.try_send(secure_input());
+        let _ = reply.try_send(secure_input_on());
     });
     answer.recv_timeout(SECURE_INPUT_PATIENCE).ok()
 }

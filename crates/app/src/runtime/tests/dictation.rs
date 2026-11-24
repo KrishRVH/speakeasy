@@ -15,6 +15,7 @@ async fn desktop_readiness_blocks_capture_until_native_startup_completes() -> an
     h.input(Input::DesktopReady {
         shortcut: "fixture shortcut".into(),
         cancel: "fixture cancel".into(),
+        globe_shortcut: false,
     });
     h.observe(|snapshot| snapshot.desktop_ready).await?;
     assert!(h.captures.try_recv().is_err());
@@ -31,7 +32,7 @@ async fn held_shortcut_release_finishes_through_the_owner() -> anyhow::Result<()
     let mut h = Harness::new()?;
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
-    tokio::time::advance(Duration::from_millis(250)).await;
+    tokio::time::advance(Duration::from_millis(400)).await;
     h.input(Input::Release);
     h.transcribe_next_as("").await?;
     h.phase(Phase::Empty).await?;

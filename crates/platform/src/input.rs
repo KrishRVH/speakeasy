@@ -25,7 +25,12 @@ pub enum Input {
     Submit,
     StartShow(Scope),
     Unavailable(String),
-    DesktopReady { shortcut: String, cancel: String },
+    DesktopReady {
+        shortcut: String,
+        cancel: String,
+        /// The shortcut is Fn (🌐) alone, whose presses macOS may also act on; see `globe_key`.
+        globe_shortcut: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

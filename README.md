@@ -65,8 +65,10 @@ Choose **Right Ctrl** or **F13** on Windows, and **F13**, **Right Option**, or *
 Mac, when the default conflicts with another app or an external keyboard's Fn stays in firmware.
 With a right modifier, wait a quarter-second before adding a hold key so quick chords such as Right
 Ctrl+C still copy. For Mac Fn, set **System Settings → Keyboard → Press 🌐 key to** to **Do
-Nothing**. When Secure Keyboard Entry is active, Mac modifier shortcuts still record, and F13 and
-the hold keys are unavailable to Speakeasy. The pill shows a notice.
+Nothing**; Settings and the pill say so when it opens a picker, switches input, or starts Dictation.
+When Secure Keyboard Entry is active, Mac modifier shortcuts still record, and F13 and the hold keys
+are unavailable to Speakeasy. The pill names the app that turned it on, often a terminal with Secure
+Keyboard Entry enabled in its menu.
 
 By default, text is pasted. Windows and macOS restore the prior clipboard after half a second when
 they can copy it back and the clipboard is still unchanged. A paste followed by Return leaves the

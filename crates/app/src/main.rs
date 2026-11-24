@@ -201,7 +201,7 @@ fn launch(
         let pill = match pill::open(
             updates,
             levels,
-            mode.secure_input(),
+            mode.keyboard(),
             config.prefers_reduced_motion(),
             config.theme,
             pill::Opening::Startup,

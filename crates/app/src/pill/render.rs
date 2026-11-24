@@ -2,10 +2,11 @@ use gpui::{
     AnyElement, BoxShadow, Div, SharedString, canvas, div, point, prelude::*, px, rgb, rgba,
 };
 use speakeasy_core::{machine::Phase, motion::Spring};
+use speakeasy_platform::GlobeKey;
 
 use super::{
-    Content, LID_CLOSED, Pill, RECORDING_WIDTH, SHADOW_BLUR, SHADOW_OFFSET, SHADOW_ROOM, Scene,
-    grille::Grille,
+    Content, LID_CLOSED, NOTE_HEIGHT, Note, Pill, RECORDING_WIDTH, SHADOW_BLUR, SHADOW_OFFSET,
+    SHADOW_ROOM, Scene, grille::Grille,
 };
 use crate::{
     controls::{caps, facet, hollow, icon},
@@ -26,12 +27,8 @@ const TRAY_HINT: &str = if cfg!(target_os = "macos") {
     "In the tray · Use Speakeasy's menu to quit"
 };
 const DRAW_HINT: &str = "Hold Shift to draw";
-const SECURE_INPUT: &str =
-    "Secure keyboard entry is on, so Escape, Space, Return, V, S, W, and A won't reach Speakeasy.";
-const SECURE_INPUT_SOURCES: &str = "Often a password field or terminal";
-const DEFAULT_MICROPHONE: &str =
-    "Your chosen microphone isn't connected, so this uses the default one.";
-const DEFAULT_MICROPHONE_SOURCE: &str = "Choose another in Settings";
+/// Keeps a note clear of the capsule's rounded ends.
+const NOTE_INSET: f32 = 20.0;
 
 impl Pill {
     pub(super) fn render_capsule(&self, scene: Scene) -> Div {
@@ -84,20 +81,6 @@ impl Pill {
                 .text_size(px(12.0))
                 .child(TRAY_HINT)
                 .into_any_element(),
-            Content::SecureInput => message_row(
-                facet(palette.live, JEWEL),
-                SECURE_INPUT.into(),
-                Some(SECURE_INPUT_SOURCES),
-                palette,
-            )
-            .into_any_element(),
-            Content::DefaultMicrophone => message_row(
-                facet(palette.live, JEWEL),
-                DEFAULT_MICROPHONE.into(),
-                Some(DEFAULT_MICROPHONE_SOURCE),
-                palette,
-            )
-            .into_any_element(),
             Content::Error => message_row(
                 facet(palette.warn, JEWEL),
                 self.snapshot.message.clone().into(),
@@ -118,8 +101,16 @@ impl Pill {
     }
 
     fn render_slot(&self, scene: Scene, palette: &'static Palette) -> Div {
-        let (width, height) = (self.capsule.width.value(), self.capsule.height.value());
+        let opened = self.capsule.note.value().clamp(0.0, 1.0);
+        let height = self.capsule.height.value() - NOTE_HEIGHT * opened;
+        // The capsule's 1 px border takes a pixel from each side of the row's room.
+        let width = self.capsule.width.value().min(self.capsule.row.value()) - 2.0;
         let shows_clock = scene.shows_clock();
+        let note = self
+            .last_note
+            .as_ref()
+            .filter(|_| opened > 0.01)
+            .map(|note| note_line(note, opened, palette));
 
         let slot_room = if shows_clock {
             width.min(RECORDING_WIDTH)
@@ -136,8 +127,9 @@ impl Pill {
             sweep: scene.sweep(self.reduced_motion),
             palette,
         };
-        div()
-            .w_full()
+        let row = div()
+            .w(px(width))
+            .h(px(height))
             .px(px(ROW_PADDING))
             .flex()
             .items_center()
@@ -216,8 +208,64 @@ impl Pill {
                         })
                         .child(div().text_size(px(11.0)).text_color(rgb(color)).child(text)),
                 )
-            })
+            });
+        div()
+            .size_full()
+            .flex()
+            .flex_col()
+            .items_center()
+            .child(row)
+            .children(note)
     }
+}
+
+/// The note under the slot, clipped to its opening so it unrolls with the capsule.
+fn note_line(note: &Note, opened: f32, palette: &Palette) -> Div {
+    let text: SharedString = match note {
+        Note::GlobeKey(GlobeKey::Emoji) => {
+            "Fn also opens Emoji & Symbols; see Settings to stop it".into()
+        },
+        Note::GlobeKey(GlobeKey::InputSource) => {
+            "Fn also switches the input source; see Settings to stop it".into()
+        },
+        Note::GlobeKey(GlobeKey::Dictation) => {
+            "Double-tapping Fn also starts macOS Dictation; see Settings".into()
+        },
+        Note::SecureInput {
+            holder: Some(holder),
+        } => format!("Secure input blocks Space, Return, and Esc. {holder} turned it on.").into(),
+        Note::SecureInput { holder: None } => "Secure input blocks Space, Return, and Esc.".into(),
+        Note::DefaultMicrophone => "Your microphone isn't connected; using the default".into(),
+    };
+    div()
+        .w_full()
+        .h(px(NOTE_HEIGHT * opened))
+        .px(px(NOTE_INSET))
+        .overflow_hidden()
+        .flex()
+        .justify_center()
+        .opacity(opened)
+        .child(
+            div()
+                .flex_none()
+                .max_w_full()
+                .h(px(12.0))
+                .flex()
+                .items_center()
+                .gap(px(6.0))
+                .child(hollow(palette.lamp, 8.0))
+                .child(
+                    div()
+                        .min_w(px(0.0))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_ellipsis()
+                        .text_size(px(10.5))
+                        .line_height(px(12.0))
+                        .text_color(rgb(palette.muted))
+                        .child(text),
+                ),
+        )
 }
 
 fn message_row(

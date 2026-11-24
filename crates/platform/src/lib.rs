@@ -45,9 +45,9 @@ pub use self::{
     awake::{Awake, Keep},
     clipboard::{ClipboardContent, copy_content},
     desktop::{
-        DesktopOptions, FileFilter, InputMonitor, LinuxPaste, MacShortcut, NativeWindow, Shortcut,
-        WindowsShortcut, attach_stdio, copy_text, prepare, reduced_motion, secure_input,
-        show_startup_error,
+        DesktopOptions, FileFilter, GlobeKey, InputMonitor, LinuxPaste, MacShortcut, NativeWindow,
+        SecureInput, Shortcut, WindowsShortcut, attach_stdio, copy_text, globe_key, prepare,
+        reduced_motion, secure_input, show_startup_error,
     },
     image::BgraImage,
     input::{IdleInput, Input, InputSender, InsertPermit, Taps},

@@ -368,6 +368,7 @@ fn run_event_loop(
     input.deliver(Input::DesktopReady {
         shortcut: shortcut.label().into(),
         cancel: CANCEL_SHORTCUT.into(),
+        globe_shortcut: false,
     });
     pump_messages(stop, &mut notifications)
 }

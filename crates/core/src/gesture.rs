@@ -6,7 +6,8 @@ use std::{
 /// Counted from the press, so microphone startup is included.
 pub const RECORDING_LIMIT: Duration = Duration::from_secs(300);
 
-const TAP: Duration = Duration::from_millis(220);
+/// A press released this soon is a tap, which may start a double-tap; a longer one is a hold.
+const TAP: Duration = Duration::from_millis(300);
 
 const DOUBLE_TAP: Duration = Duration::from_millis(300);
 

@@ -44,7 +44,7 @@ async fn check_frame_rate(cx: &AsyncApp) -> anyhow::Result<()> {
         open(
             updates,
             levels,
-            || false,
+            Keyboard::QUIET,
             false,
             Theme::default(),
             Opening::Startup,

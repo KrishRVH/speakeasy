@@ -169,11 +169,37 @@ pub fn reduced_motion() -> bool {
     native::reduced_motion()
 }
 
-/// Whether secure keyboard entry is on; call on the main thread, where macOS can answer.
+/// What macOS does with a tap of the Fn (🌐) key besides passing it on, as Keyboard settings
+/// choose under "Press 🌐 key to".
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GlobeKey {
+    InputSource,
+    Emoji,
+    Dictation,
+}
+
+/// The action macOS gives a tap of the Fn (🌐) key; `None` for Do Nothing and off macOS.
 ///
-/// Elsewhere macOS answers `false`, and Windows and Linux always do.
+/// A Mac that never saved the setting also answers `None`, since its default varies by model.
 #[must_use]
-pub fn secure_input() -> bool {
+pub fn globe_key() -> Option<GlobeKey> {
+    native::globe_key()
+}
+
+/// Secure keyboard entry, during which macOS shows Speakeasy only modifier keys.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SecureInput {
+    /// The app macOS names as turning it on, if it names one.
+    ///
+    /// macOS can name the frontmost app while a background app holds it.
+    pub holder: Option<String>,
+}
+
+/// Secure keyboard entry, if it is on; call on the main thread, where macOS can answer.
+///
+/// Elsewhere macOS answers `None`, and Windows and Linux always do.
+#[must_use]
+pub fn secure_input() -> Option<SecureInput> {
     native::secure_input()
 }
 

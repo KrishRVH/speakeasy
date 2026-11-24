@@ -48,7 +48,7 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     let pill = open(
         updates,
         levels,
-        || false,
+        Keyboard::QUIET,
         true,
         Theme::default(),
         Opening::Startup,
@@ -186,7 +186,7 @@ async fn check_reopened_pill(cx: &AsyncApp) -> anyhow::Result<()> {
             let pill = open(
                 updates,
                 levels,
-                || false,
+                Keyboard::QUIET,
                 true,
                 Theme::default(),
                 opening,
@@ -261,7 +261,7 @@ async fn check_late_window(cx: &AsyncApp) -> anyhow::Result<()> {
         let _pill = open(
             updates,
             levels,
-            || false,
+            Keyboard::QUIET,
             true,
             Theme::default(),
             Opening::Startup,

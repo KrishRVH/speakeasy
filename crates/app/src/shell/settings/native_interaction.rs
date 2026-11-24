@@ -36,7 +36,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                     crate::pill::open(
                         updates.clone(),
                         levels,
-                        || false,
+                        crate::pill::Keyboard::QUIET,
                         true,
                         config.theme,
                         crate::pill::Opening::Startup,

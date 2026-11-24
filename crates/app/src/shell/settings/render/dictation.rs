@@ -143,7 +143,45 @@ impl Settings {
             .when(!cfg!(target_os = "linux"), |card| {
                 card.child(kit.detail(self.shortcut_help()).px(px(16.0)).pb(px(12.0)))
             })
+            .children(
+                self.globe_warning(ui)
+                    .map(|warning| warning.mx(px(16.0)).mb(px(16.0))),
+            )
             .child(self.practice_panel(ui))
+    }
+
+    /// The Fn shortcut's other meaning on macOS, which fires with every Speakeasy press too.
+    fn globe_warning(&self, ui: &Ui<'_>) -> Option<Div> {
+        use speakeasy_platform::{GlobeKey, MacShortcut};
+        if self.config.mac_shortcut != MacShortcut::Function {
+            return None;
+        }
+        let (title, effect) = match self.globe_key? {
+            GlobeKey::Emoji => (
+                "Fn also opens Emoji & Symbols",
+                "The picker opens on every Fn press, including while you dictate, and can catch the text Speakeasy pastes.",
+            ),
+            GlobeKey::InputSource => (
+                "Fn also switches the input source",
+                "macOS switches the input source on every Fn press, including while you dictate.",
+            ),
+            GlobeKey::Dictation => (
+                "Double-tapping Fn also starts macOS Dictation",
+                "macOS starts its own Dictation when you double-tap Fn, which is how Speakeasy goes hands-free.",
+            ),
+        };
+        Some(ui.kit().banner(
+            Tone::Warn,
+            title,
+            format!(
+                "{effect} In Keyboard settings, set “Press 🌐 key to” to Do Nothing, or choose another shortcut."
+            ),
+            Some(div().child(ui.button(
+                "Open Keyboard Settings",
+                Action::KeyboardSettings,
+                Weight::Secondary,
+            ))),
+        ))
     }
 
     pub(super) const fn shortcut_help(&self) -> &'static str {

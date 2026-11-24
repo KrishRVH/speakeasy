@@ -180,7 +180,7 @@ fn reopen_pill(cx: &mut App) -> anyhow::Result<()> {
     let pill = crate::pill::open(
         services.output.subscribe(),
         services.meter.subscribe(),
-        services.mode.secure_input(),
+        services.mode.keyboard(),
         services.config.prefers_reduced_motion(),
         services.config.theme,
         crate::pill::Opening::Reopened,
@@ -222,6 +222,7 @@ pub(super) fn open(cx: &mut App) -> anyhow::Result<()> {
             Settings::watch_practice_focus(window, cx);
             if !mode.is_demo() {
                 view.follow_permissions(window, cx, speakeasy_platform::Permissions::read);
+                view.follow_globe_key(window, cx);
             }
             if fresh_install {
                 view.start_setup(cx);

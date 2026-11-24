@@ -45,29 +45,30 @@ center, in the theme's live color. Errors lead with a cut jewel in the attention
 with a hollow lamp jewel; a tracked-caps line points to Settings. The pill is non-activating and
 click-through.
 
-| State            | Content                                                                                                            |
-| ---------------- | ------------------------------------------------------------------------------------------------------------------ |
-| Starting         | Closed lid with a microphone symbol and “Opening mic…”.                                                            |
-| Recording        | Open slot, live rim, and measured grille.                                                                          |
-| Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                            |
-| Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.  |
-| Secure input     | A live jewel and a note that Escape, Space, Return, V, S, W, and A won’t reach Speakeasy, for five seconds.        |
-| Default mic      | A live jewel and a note that the chosen microphone isn’t connected and the default records, for four seconds.      |
-| Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                             |
-| Stopping         | The lid stays open until capture stops; the grille settles.                                                        |
-| Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                           |
-| Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                   |
-| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too. |
-| Stopped early    | A quiet notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.          |
-| Nothing chosen   | A quiet notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                         |
-| Narration lost   | The same notice saying what narration the copied Show lacks, why, and how it ended, above “Details in Settings”.   |
-| Text copied      | A quiet notice of up to two lines saying how to paste the copied text, for six seconds.                            |
-| Microphone lost  | A quiet notice naming what stopped the microphone and how to paste the words it kept, for six seconds.             |
-| Show gone        | A quiet notice saying the last Show has expired or was deleted, for six seconds.                                   |
-| No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                            |
-| Cancelled        | Quiet dismissal without a completion mark.                                                                         |
-| Error            | Up to two message lines and a Settings reminder, visible for eight seconds.                                        |
-| Tray hint        | One line saying Speakeasy is in the tray or menu bar, for three seconds, only while the pill is otherwise hidden.  |
+| State            | Content                                                                                                                                                                                            |
+| ---------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Starting         | Closed lid with a microphone symbol and “Opening mic…”.                                                                                                                                            |
+| Recording        | Open slot, live rim, and measured grille.                                                                                                                                                          |
+| Hands-free       | Grille, lock symbol, and elapsed timer beside the slot.                                                                                                                                            |
+| Show recording   | Hands-free layout with a red screen mark for the lock; “Hold Shift to draw” replaces the timer for three seconds.                                                                                  |
+| Fn also acts     | A line under the slot naming what macOS also does on Fn and pointing to Settings, for five seconds, as the recording opens; for macOS Dictation, which a double press starts, as hands-free locks. |
+| Secure input     | A line under the slot naming the app that turned it on and that Space, Return, and Esc won’t arrive, for five seconds.                                                                             |
+| Default mic      | A line under the slot saying the chosen microphone isn’t connected and the default records, for four seconds.                                                                                      |
+| Final 30 seconds | Remaining time in the attention color; the recording limit stays in the session owner.                                                                                                             |
+| Stopping         | The lid stays open until capture stops; the grille settles.                                                                                                                                        |
+| Processing       | The lid partly closes; a lamp highlight sweeps the opening after 250 ms.                                                                                                                           |
+| Submitted        | Closed lid with a lamp check for 350 ms, then collapse and fade.                                                                                                                                   |
+| Show copied      | Closed lid with a lamp check and “Show copied” for 1.6 seconds, each time a Show is copied, by Copy last Show too.                                                                                 |
+| Stopped early    | A quiet notice of up to two lines saying the Show was copied but stopped early, and why, for six seconds.                                                                                          |
+| Nothing chosen   | A quiet notice of up to two lines saying why a W or A Show was cancelled, for six seconds.                                                                                                         |
+| Narration lost   | The same notice saying what narration the copied Show lacks, why, and how it ended, above “Details in Settings”.                                                                                   |
+| Text copied      | A quiet notice of up to two lines saying how to paste the copied text, for six seconds.                                                                                                            |
+| Microphone lost  | A quiet notice naming what stopped the microphone and how to paste the words it kept, for six seconds.                                                                                             |
+| Show gone        | A quiet notice saying the last Show has expired or was deleted, for six seconds.                                                                                                                   |
+| No speech        | “No speech detected” on the closed lid for 1.2 seconds.                                                                                                                                            |
+| Cancelled        | Quiet dismissal without a completion mark.                                                                                                                                                         |
+| Error            | Up to two message lines and a Settings reminder, visible for eight seconds.                                                                                                                        |
+| Tray hint        | One line saying Speakeasy is in the tray or menu bar, for three seconds, only while the pill is otherwise hidden.                                                                                  |
 
 Windows places the pill at the bottom center of the foreground window's monitor work area. macOS
 uses the screen under the pointer. Both place the capsule about 28 DIP above the work area's bottom
@@ -137,11 +138,14 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
 - Hold the selected Windows or Mac shortcut to dictate; release to finish. Windows defaults to
   Ctrl+Win and also offers Right Ctrl and F13; Mac defaults to Fn and also offers F13, Right Option,
   and Right Command, both including during setup practice. The shortcut card explains firmware-only
-  Fn keys, mapping a spare key to F13, and the quick-combination rule. With a right modifier, a hold
-  key pressed within 250 ms of it interrupts and reaches the app, so Right Ctrl+C still copies;
-  pressed when another modifier is already down, the right modifier does not dictate. Adding Space
-  during the hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A
-  short single tap finishes after its tap window.
+  Fn keys, mapping a spare key to F13, and the quick-combination rule. With Fn selected, the card
+  warns, and the pill notes as each recording opens, when macOS also acts on Fn presses (“Press 🌐
+  key to”), which can open a picker that catches the paste; a Globe key event Fn sends beside its
+  flag change is part of the Fn press, never another key. With a right modifier, a hold key pressed
+  within 250 ms of it interrupts and reaches the app, so Right Ctrl+C still copies; pressed when
+  another modifier is already down, the right modifier does not dictate. Adding Space during the
+  hold, or double-tapping, switches to hands-free; press the shortcut again to finish. A short
+  single tap finishes after its tap window.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - On Windows/macOS, the shortcut's modifiers are observed, never swallowed. A selected F13 is
@@ -190,7 +194,8 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   explicit command binding; bare Escape is not globally captured. Animation never delays
   cancellation or owns the microphone lifetime.
 - On macOS, Secure Keyboard Entry leaves modifier events visible. The pill checks once as the
-  microphone opens and identifies unavailable keys. The final countdown takes precedence.
+  microphone opens and, under the slot, names the app macOS reports as holding it. Notes under the
+  slot never hide the grille, lock, timer, or countdown; each gets its full time in turn.
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor

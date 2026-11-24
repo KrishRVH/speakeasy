@@ -80,8 +80,7 @@ fn recording(elapsed: Duration) -> Scene {
         since_phase: Duration::ZERO,
         tray_hint: None,
         draw_hint: None,
-        secure_input: None,
-        default_microphone: None,
+        note: None,
         hands_free: true,
         for_script: false,
         show: false,
@@ -196,99 +195,126 @@ fn a_new_show_says_how_to_draw_in_place_of_its_clock_until_the_hint_ends() {
 }
 
 #[test]
-fn secure_input_replaces_the_slot_while_capture_is_open_until_the_notice_or_the_time_runs_out() {
+fn a_note_opens_under_the_slot_without_hiding_the_recording() {
     let left = Duration::from_millis(400);
-    let held = |seconds, phase| Scene {
+    let noted = |phase, seconds, hands_free| Scene {
         phase,
-        hands_free: false,
-        style: Style::Verbatim,
-        secure_input: Some(left),
+        hands_free,
+        note: Some(Showing {
+            note: Note::SecureInput { holder: None },
+            left,
+        }),
         ..recording(Duration::from_secs(seconds))
     };
-    let recording = held(2, Phase::Recording);
-    assert_eq!(recording.content(), Content::SecureInput);
+    for (seconds, hands_free) in [(2, false), (2, true), (280, true)] {
+        let scene = noted(Phase::Recording, seconds, hands_free);
+        let bare = Scene {
+            note: None,
+            ..noted(Phase::Recording, seconds, hands_free)
+        };
+        assert_eq!(scene.content(), Content::Slot, "The waveform stays");
+        assert_eq!(
+            scene.shows_clock(),
+            bare.shows_clock(),
+            "The lock, timer, and countdown stay"
+        );
+        assert_eq!(
+            scene.row_size(),
+            bare.row_size(),
+            "The slot row keeps its size"
+        );
+        let (size, row) = (scene.capsule_size(), bare.capsule_size());
+        assert!(
+            size.height > row.height && size.width >= NOTE_WIDTH.max(row.width),
+            "The capsule makes room under the slot, {size:?} around {row:?}"
+        );
+    }
     assert_eq!(
-        recording.capsule_size(),
-        MESSAGE_SIZE,
-        "The style label cannot widen the notice past the window"
-    );
-    assert_eq!(
-        recording.wake_after(),
+        noted(Phase::Recording, 2, false).wake_after(),
         Some(left),
-        "The slot returns as the notice ends"
+        "The note closes as it ends"
     );
-    assert_eq!(
-        held(2, Phase::Stopping).content(),
-        Content::SecureInput,
-        "The notice stays while capture closes"
+    assert!(
+        noted(Phase::Processing, 2, false).shown_note().is_some(),
+        "A quick hold still sees it while its words are recognized"
     );
-    assert_eq!(
-        held(2, Phase::Processing).content(),
-        Content::Slot,
-        "Processing shows its sweep once capture ends"
-    );
-    assert_eq!(
-        held(280, Phase::Recording).content(),
-        Content::Slot,
-        "The countdown to the limit outranks the notice"
-    );
+    let done = noted(Phase::Done, 2, false);
+    assert!(done.shown_note().is_none());
+    assert_eq!(done.capsule_size(), done.row_size());
 }
 
 #[test]
-fn secure_input_is_read_once_as_each_recording_opens() {
+fn secure_input_is_read_once_as_each_recording_opens_and_names_its_holder() {
     let snapshot = |session, phase| Snapshot {
         session,
         phase,
         ..Snapshot::default()
     };
-    let unread = || -> bool { panic!("Secure input was read after its recording opened") };
+    let unread =
+        || -> Option<SecureInput> { panic!("Secure input was read after its recording opened") };
+    let held = || {
+        Some(SecureInput {
+            holder: Some("Terminal".into()),
+        })
+    };
+    let secure = Some(Note::SecureInput {
+        holder: Some("Terminal".into()),
+    });
+    let shown = |notes: &Notes, at| notes.showing(at).map(|showing| showing.note);
     let now = Instant::now();
     let later = now + Duration::from_secs(1);
-    let full = now.checked_add(SECURE_INPUT_FOR);
     let starting = snapshot(1, Phase::Starting);
     let recording = snapshot(1, Phase::Recording);
+
+    let mut notes = Notes::default();
+    notes.follow(&snapshot(0, Phase::Idle), &starting, now, unread, || None);
     assert_eq!(
-        secure_input_until(&snapshot(0, Phase::Idle), &starting, now, None, unread),
+        shown(&notes, now),
         None,
-        "The notice waits for the microphone"
+        "The note waits for the microphone"
     );
+    notes.follow(&starting, &recording, now, || None, || None);
     assert_eq!(
-        secure_input_until(&starting, &recording, now, None, || true),
-        full,
-        "Secure input at the opening shows the notice"
-    );
-    assert_eq!(
-        secure_input_until(&starting, &recording, now, None, || false),
+        shown(&notes, now),
         None,
         "Without secure input the slot opens as usual"
     );
+
+    let mut notes = Notes::default();
+    notes.follow(&starting, &recording, now, held, || None);
+    assert_eq!(
+        shown(&notes, now),
+        secure,
+        "Secure input at the opening names its holder"
+    );
     for next in [recording.clone(), snapshot(1, Phase::Stopping)] {
-        assert_eq!(
-            secure_input_until(&recording, &next, later, full, unread),
-            full,
-            "The rest of the recording keeps its deadline"
-        );
+        notes.follow(&recording, &next, later, unread, || None);
     }
     assert_eq!(
-        secure_input_until(
-            &recording,
-            &snapshot(2, Phase::Starting),
-            later,
-            full,
-            unread
-        ),
-        None,
-        "A new session drops the notice"
+        notes.showing(later).map(|showing| showing.left),
+        SECURE_INPUT_FOR.checked_sub(Duration::from_secs(1)),
+        "The rest of the recording keeps its deadline"
+    );
+    notes.follow(
+        &recording,
+        &snapshot(2, Phase::Starting),
+        later,
+        unread,
+        || None,
+    );
+    assert_eq!(shown(&notes, later), None, "A new session drops the note");
+
+    let mut notes = Notes::default();
+    notes.follow(
+        &recording,
+        &snapshot(2, Phase::Recording),
+        later,
+        held,
+        || None,
     );
     assert_eq!(
-        secure_input_until(
-            &recording,
-            &snapshot(2, Phase::Recording),
-            later,
-            full,
-            || true
-        ),
-        later.checked_add(SECURE_INPUT_FOR),
+        shown(&notes, later),
+        secure,
         "A session that opens at once is read too"
     );
 }
@@ -321,7 +347,7 @@ fn the_drawing_hint_starts_as_a_show_records_or_after_its_notice_and_ends_with_i
     let held = snapshot(1, Phase::Recording, false);
     let show = snapshot(1, Phase::Recording, true);
     assert_eq!(
-        draw_hint_until(&held, &show, now, None, None),
+        draw_hint_until(&held, &show, now, None),
         full,
         "S during a hold starts the hint"
     );
@@ -330,55 +356,32 @@ fn the_drawing_hint_starts_as_a_show_records_or_after_its_notice_and_ends_with_i
         ..show.clone()
     };
     assert_eq!(
-        draw_hint_until(&show, &republished, later, full, None),
+        draw_hint_until(&show, &republished, later, full),
         full,
         "A republished Show keeps its deadline"
     );
     let opening = snapshot(1, Phase::Starting, true);
     assert_eq!(
-        draw_hint_until(
-            &snapshot(1, Phase::Starting, false),
-            &opening,
-            now,
-            None,
-            None
-        ),
+        draw_hint_until(&snapshot(1, Phase::Starting, false), &opening, now, None),
         None,
         "The hint waits for the microphone"
     );
     assert_eq!(
-        draw_hint_until(&opening, &show, later, None, None),
+        draw_hint_until(&opening, &show, later, None),
         later.checked_add(DRAW_HINT_FOR),
         "A Show that starts recording gets the full hint"
-    );
-    let notice = later.checked_add(SECURE_INPUT_FOR);
-    assert_eq!(
-        draw_hint_until(&opening, &show, later, None, notice),
-        notice.and_then(|notice| notice.checked_add(DRAW_HINT_FOR)),
-        "The full hint follows the secure input notice"
-    );
-    assert_eq!(
-        draw_hint_until(&held, &show, later, None, Some(now)),
-        later.checked_add(DRAW_HINT_FOR),
-        "A notice that has ended does not delay the hint"
     );
     let hands_free = Snapshot {
         hands_free: true,
         ..held.clone()
     };
     assert_eq!(
-        draw_hint_until(&held, &hands_free, now, None, None),
+        draw_hint_until(&held, &hands_free, now, None),
         None,
         "Hands-free dictation is not a Show"
     );
     assert_eq!(
-        draw_hint_until(
-            &show,
-            &snapshot(2, Phase::Starting, false),
-            later,
-            full,
-            None
-        ),
+        draw_hint_until(&show, &snapshot(2, Phase::Starting, false), later, full),
         None,
         "A new session drops the hint"
     );
@@ -411,58 +414,109 @@ fn a_dictation_for_a_script_says_so_while_it_records() {
 }
 
 #[test]
-fn a_fallback_microphone_is_named_once_as_capture_opens_and_yields_to_secure_input() {
-    let left = Duration::from_secs(2);
-    let fallback = |phase| Scene {
-        phase,
-        default_microphone: Some(left),
-        ..recording(Duration::from_secs(1))
-    };
-    let recording = fallback(Phase::Recording);
-    assert_eq!(recording.content(), Content::DefaultMicrophone);
-    assert_eq!(recording.capsule_size(), MESSAGE_SIZE);
-    assert_eq!(
-        recording.wake_after(),
-        Some(Duration::from_millis(1_000).min(left))
-    );
-    assert_eq!(
-        fallback(Phase::Processing).content(),
-        Content::DefaultMicrophone,
-        "A quick hold still sees the notice while its words are recognized"
-    );
-    assert_eq!(fallback(Phase::Done).content(), Content::Slot);
-    let both = Scene {
-        secure_input: Some(left),
-        ..fallback(Phase::Recording)
-    };
-    assert_eq!(both.content(), Content::SecureInput);
-
+fn a_fallback_microphone_note_waits_for_the_secure_input_note_and_gets_its_full_time() {
     let now = Instant::now();
-    let opened = Snapshot {
+    let starting = Snapshot {
         session: 4,
+        phase: Phase::Starting,
+        ..Snapshot::default()
+    };
+    let opened = Snapshot {
         phase: Phase::Recording,
         default_microphone: true,
-        ..Snapshot::default()
+        ..starting.clone()
     };
-    let before = Snapshot {
-        session: 4,
-        phase: Phase::Recording,
-        ..Snapshot::default()
-    };
-    let until = default_microphone_until(&before, &opened, now, None, None);
-    assert_eq!(until, now.checked_add(DEFAULT_MICROPHONE_FOR));
-    let later = now + Duration::from_secs(1);
+    let mut notes = Notes::default();
+    notes.follow(
+        &starting,
+        &opened,
+        now,
+        || Some(SecureInput { holder: None }),
+        || None,
+    );
     assert_eq!(
-        default_microphone_until(&opened, &opened, later, until, None),
-        until,
-        "Later snapshots of the same session keep the original deadline"
+        notes.showing(now).map(|showing| showing.note),
+        Some(Note::SecureInput { holder: None })
+    );
+    let after = now + SECURE_INPUT_FOR;
+    assert_eq!(
+        notes.showing(after),
+        Some(Showing {
+            note: Note::DefaultMicrophone,
+            left: DEFAULT_MICROPHONE_FOR,
+        }),
+        "Each note gets its full time"
+    );
+    notes.follow(&opened, &opened.clone(), after, || None, || None);
+    assert_eq!(
+        notes.showing(after + DEFAULT_MICROPHONE_FOR),
+        None,
+        "Later snapshots of the session raise nothing again"
+    );
+
+    let mut notes = Notes::default();
+    notes.follow(&starting, &opened, now, || None, || None);
+    assert_eq!(
+        notes.showing(now).map(|showing| showing.note),
+        Some(Note::DefaultMicrophone)
     );
     let next = Snapshot {
         session: 5,
-        ..before
+        ..starting
     };
+    notes.follow(&opened, &next, now, || None, || None);
+    assert_eq!(notes.showing(now), None, "A new session drops the note");
+}
+
+#[test]
+fn an_fn_shortcut_that_macos_also_acts_on_gets_a_note_when_macos_acts() {
+    let unread = || -> Option<GlobeKey> { panic!("The Fn key's action was read needlessly") };
+    let now = Instant::now();
+    let starting = Snapshot {
+        session: 1,
+        phase: Phase::Starting,
+        globe_shortcut: true,
+        ..Snapshot::default()
+    };
+    let opened = Snapshot {
+        phase: Phase::Recording,
+        ..starting.clone()
+    };
+    let mut notes = Notes::default();
+    notes.follow(&starting, &opened, now, || None, || Some(GlobeKey::Emoji));
     assert_eq!(
-        default_microphone_until(&opened, &next, later, until, None),
-        None
+        notes.showing(now).map(|showing| showing.note),
+        Some(Note::GlobeKey(GlobeKey::Emoji))
+    );
+    notes.follow(&opened, &opened.clone(), now, || None, unread);
+
+    let mut notes = Notes::default();
+    notes.follow(&starting, &opened, now, || None, || None);
+    assert_eq!(notes.showing(now), None, "Do Nothing raises no note");
+
+    let another = Snapshot {
+        globe_shortcut: false,
+        ..opened.clone()
+    };
+    notes.follow(&starting, &another, now, || None, unread);
+    assert_eq!(notes.showing(now), None, "Another shortcut raises no note");
+
+    let dictation = || Some(GlobeKey::Dictation);
+    let mut notes = Notes::default();
+    notes.follow(&starting, &opened, now, || None, dictation);
+    assert_eq!(
+        notes.showing(now),
+        None,
+        "A hold never starts macOS Dictation"
+    );
+    let locked = Snapshot {
+        hands_free: true,
+        ..opened.clone()
+    };
+    notes.follow(&opened, &locked, now, || None, dictation);
+    assert_eq!(
+        notes.showing(now).map(|showing| showing.note),
+        Some(Note::GlobeKey(GlobeKey::Dictation)),
+        "The double-tap that locks hands-free also starts macOS Dictation"
     );
 }

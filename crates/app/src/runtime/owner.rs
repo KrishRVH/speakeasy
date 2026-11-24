@@ -111,6 +111,7 @@ struct World<P: Ports> {
     meter: watch::Sender<f32>,
     shortcut: Arc<str>,
     cancel_shortcut: Arc<str>,
+    globe_shortcut: bool,
     /// The session whose chosen microphone was missing, so capture fell back to the system default;
     /// the pill says so.
     default_microphone: Option<SessionId>,
@@ -176,6 +177,7 @@ impl<P: Ports> Owner<P> {
             meter,
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
+            globe_shortcut: false,
             default_microphone: None,
             awake: None,
             reverting: false,
@@ -357,6 +359,7 @@ impl<P: Ports> Owner<P> {
             desktop_ready: machine.desktop_ready(),
             shortcut: Arc::clone(&world.shortcut),
             cancel_shortcut: Arc::clone(&world.cancel_shortcut),
+            globe_shortcut: world.globe_shortcut,
         };
         world.snapshots.send_if_modified(|presented| {
             if *presented == snapshot {
@@ -410,9 +413,14 @@ impl<P: Ports> World<P> {
             Input::Submit => machine::Input::Submit,
             Input::StartShow(scope) => machine::Input::StartShow(scope),
             Input::Unavailable(message) => machine::Input::Unavailable(message),
-            Input::DesktopReady { shortcut, cancel } => {
+            Input::DesktopReady {
+                shortcut,
+                cancel,
+                globe_shortcut,
+            } => {
                 self.shortcut = shortcut.into();
                 self.cancel_shortcut = cancel.into();
+                self.globe_shortcut = globe_shortcut;
                 machine::Input::DesktopReady
             },
         }

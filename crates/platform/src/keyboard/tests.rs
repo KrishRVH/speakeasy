@@ -45,6 +45,7 @@ const MAC_RETURN: i64 = 36;
 const MAC_KEYPAD_ENTER: i64 = 76;
 const RETURN: u32 = 0x0D;
 const MAC_F13: i64 = 105;
+const MAC_GLOBE: i64 = 179;
 const NONE_HELD: Physical = Physical {
     chord_keys: [false; 5],
     other_shortcut: false,
@@ -926,5 +927,46 @@ fn mac_function_space_and_escape_are_observed_without_native_events() {
         policy
             .observe(function(true), keyboard_fn_up, now())
             .starts()
+    );
+}
+
+#[test]
+fn the_globe_keys_own_event_neither_interrupts_a_fn_hold_nor_counts_as_typing() {
+    let mut policy = mac_holding();
+    for down in [true, false] {
+        let globe = key(MAC_GLOBE, down, FN_HELD);
+        let decision = policy.observe(globe, keyboard_fn_up, now());
+        assert_eq!(
+            delivered(&decision),
+            [],
+            "The Globe key interrupted its own hold"
+        );
+        assert!(!decision.swallows());
+        assert!(
+            !Mac::types(globe, &decision),
+            "The Globe key counted as typing"
+        );
+    }
+    let lock = policy.observe(key(MAC_SPACE, true, FN_HELD), keyboard_fn_up, now());
+    assert_eq!(
+        delivered(&lock),
+        [Action::Lock],
+        "The hold ended after the Globe key"
+    );
+
+    let mut option = Mac::new(MacShortcut::RightOption);
+    let held = Modifiers {
+        talk: true,
+        ..NO_MODIFIERS
+    };
+    let start = MacEvent::FlagsChanged {
+        code: MAC_RIGHT_OPTION,
+        held,
+    };
+    assert!(option.observe(start, keyboard_fn_up, now()).starts());
+    assert_eq!(
+        delivered(&option.observe(key(MAC_GLOBE, true, held), keyboard_fn_up, now())),
+        [Action::Interrupt],
+        "With another shortcut, the Globe key is another key"
     );
 }

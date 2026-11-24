@@ -64,8 +64,12 @@ pub(crate) fn reduced_motion() -> bool {
     animates == FALSE
 }
 
-pub(crate) fn secure_input() -> bool {
-    false
+pub(crate) const fn secure_input() -> Option<crate::SecureInput> {
+    None
+}
+
+pub(crate) const fn globe_key() -> Option<crate::GlobeKey> {
+    None
 }
 
 pub(crate) fn attach_stdio() -> bool {

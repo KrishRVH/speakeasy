@@ -86,7 +86,7 @@ async fn empty_replay_during_a_hold_preserves_the_recording() -> anyhow::Result<
     h.input(Input::Press);
     h.phase(Phase::Recording).await?;
     receive(&h.captures).await?;
-    tokio::time::advance(Duration::from_millis(300)).await;
+    tokio::time::advance(Duration::from_millis(400)).await;
     h.input(Input::PasteLast);
     h.input(Input::Release);
     h.transcribe_next_as("Current fixture.").await?;

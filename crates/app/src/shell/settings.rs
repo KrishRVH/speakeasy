@@ -75,6 +75,8 @@ pub(super) struct Settings {
     shows_help: bool,
     keyboard: bool,
     startup_apps_off: bool,
+    /// What macOS also does when Fn is pressed; read again each time Settings comes forward.
+    globe_key: Option<speakeasy_platform::GlobeKey>,
     #[cfg(target_os = "linux")]
     desktop_command: SharedString,
     #[cfg(target_os = "windows")]
@@ -180,6 +182,7 @@ impl Settings {
             shows_help: false,
             keyboard: false,
             startup_apps_off: false,
+            globe_key: None,
             #[cfg(target_os = "linux")]
             desktop_command,
             #[cfg(target_os = "windows")]
@@ -197,6 +200,17 @@ impl Settings {
         cx.observe_window_activation(window, |view, window, cx| {
             if window.is_window_active() {
                 view.startup_apps_off = !speakeasy_platform::startup_approved();
+                cx.notify();
+            }
+        })
+        .detach();
+    }
+
+    pub(super) fn follow_globe_key(&mut self, window: &mut Window, cx: &Context<'_, Self>) {
+        self.globe_key = speakeasy_platform::globe_key();
+        cx.observe_window_activation(window, |view, window, cx| {
+            if window.is_window_active() {
+                view.globe_key = speakeasy_platform::globe_key();
                 cx.notify();
             }
         })
@@ -308,6 +322,7 @@ impl Settings {
             #[cfg(target_os = "windows")]
             Action::InstallUpdate => self.install_update(cx),
             Action::PermissionHelp(help) => cx.open_url(help.url()),
+            Action::KeyboardSettings => cx.open_url(KEYBOARD_SETTINGS),
             Action::Shows => super::reveal_shows(cx),
             Action::Quit => request_quit(cx),
         }
@@ -841,6 +856,9 @@ impl Presentation {
     }
 }
 
+/// macOS Keyboard settings, where "Press 🌐 key to" lives.
+const KEYBOARD_SETTINGS: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Action {
     Onboarding(onboarding::Action),
@@ -878,6 +896,7 @@ enum Action {
     InstallUpdate,
     Practice,
     PermissionHelp(permissions::Help),
+    KeyboardSettings,
     Reset,
     ConfirmReset,
     CancelReset,

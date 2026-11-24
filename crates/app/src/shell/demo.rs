@@ -44,6 +44,8 @@ impl Script {
         let mut snapshot = starting(self.output.borrow().session.wrapping_add(1));
         self.present(&snapshot, Duration::from_millis(350)).await;
         snapshot.phase = Phase::Recording;
+        // Shows a note under the slot as hands-free locks beside it.
+        snapshot.default_microphone = true;
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(5) {
             let seconds = start.elapsed().as_secs_f32();

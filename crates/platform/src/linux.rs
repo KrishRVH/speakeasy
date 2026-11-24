@@ -156,6 +156,7 @@ impl ShortcutLabels {
         Input::DesktopReady {
             shortcut: self.shortcut,
             cancel: self.cancel,
+            globe_shortcut: false,
         }
     }
 }
@@ -261,8 +262,12 @@ pub(crate) fn reduced_motion() -> bool {
     false
 }
 
-pub(crate) fn secure_input() -> bool {
-    false
+pub(crate) const fn secure_input() -> Option<crate::SecureInput> {
+    None
+}
+
+pub(crate) const fn globe_key() -> Option<crate::GlobeKey> {
+    None
 }
 
 pub(crate) fn copy_text(_: &str) -> anyhow::Result<()> {

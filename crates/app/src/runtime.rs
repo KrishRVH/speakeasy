@@ -66,6 +66,8 @@ pub(crate) struct Snapshot {
     pub desktop_ready: bool,
     pub shortcut: Arc<str>,
     pub cancel_shortcut: Arc<str>,
+    /// The shortcut is Fn (🌐) alone, whose presses macOS may also act on.
+    pub globe_shortcut: bool,
 }
 
 impl Default for Snapshot {
@@ -90,6 +92,7 @@ impl Default for Snapshot {
             desktop_ready: true,
             shortcut: speakeasy_platform::SHORTCUT.into(),
             cancel_shortcut: speakeasy_platform::CANCEL_SHORTCUT.into(),
+            globe_shortcut: false,
         }
     }
 }

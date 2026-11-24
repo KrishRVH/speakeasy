@@ -17,12 +17,12 @@ use std::{
 
 use anyhow::Context as _;
 use gpui::{
-    AnyWindowHandle, App, AppContext, Bounds, Pixels, Size, Task, Window,
+    AnyWindowHandle, App, AppContext, Bounds, Pixels, SharedString, Size, Task, Window,
     WindowBackgroundAppearance, WindowBounds, WindowHandle, WindowKind, WindowOptions, point,
     prelude::*, px, size,
 };
 use speakeasy_core::{gesture::RECORDING_LIMIT, machine::Phase, motion::Spring};
-use speakeasy_platform::{PILL_HEIGHT, PILL_WIDTH};
+use speakeasy_platform::{GlobeKey, PILL_HEIGHT, PILL_WIDTH, SecureInput};
 use speakeasy_show::{Ending, NarrationLoss};
 use tokio::sync::watch;
 
@@ -49,6 +49,7 @@ const TRAY_HINT_FOR: Duration = Duration::from_secs(3);
 const DRAW_HINT_FOR: Duration = Duration::from_secs(3);
 const SECURE_INPUT_FOR: Duration = Duration::from_secs(5);
 const DEFAULT_MICROPHONE_FOR: Duration = Duration::from_secs(4);
+const GLOBE_KEY_FOR: Duration = Duration::from_secs(5);
 
 pub(crate) const COUNTDOWN: Duration = Duration::from_secs(30);
 const SWEEP_DELAY: Duration = Duration::from_millis(250);
@@ -58,6 +59,11 @@ const RESTING_SIZE: Size<f32> = size(60.0, 30.0);
 const RECORDING_WIDTH: f32 = 152.0;
 const MESSAGE_WIDTH: f32 = 360.0;
 const MESSAGE_SIZE: Size<f32> = size(MESSAGE_WIDTH, 64.0);
+/// Room for a note under the slot, which widens a narrow capsule to fit it.
+const NOTE_WIDTH: f32 = 340.0;
+const NOTE_HEIGHT: f32 = 16.0;
+/// The slot row's height while it opens and records.
+const ROW_HEIGHT: f32 = 38.0;
 const HIDDEN_LIFT: f32 = 6.0;
 const SHADOW_OFFSET: f32 = 4.0;
 const SHADOW_BLUR: f32 = 16.0;
@@ -65,7 +71,9 @@ const SHADOW_ROOM: f32 = SHADOW_OFFSET + SHADOW_BLUR + HIDDEN_LIFT;
 
 const _: () = assert!(
     MESSAGE_WIDTH + 2.0 * SHADOW_BLUR <= PILL_WIDTH as f32
-        && MESSAGE_SIZE.height + SHADOW_ROOM <= PILL_HEIGHT as f32,
+        && NOTE_WIDTH <= MESSAGE_WIDTH
+        && MESSAGE_SIZE.height + SHADOW_ROOM <= PILL_HEIGHT as f32
+        && ROW_HEIGHT + NOTE_HEIGHT + SHADOW_ROOM <= PILL_HEIGHT as f32,
     "The capsule must fit the native pill window"
 );
 
@@ -88,9 +96,10 @@ pub(crate) struct Pill {
     phase_at: Instant,
     tray_hint_until: Option<Instant>,
     draw_hint_until: Option<Instant>,
-    secure_input: fn() -> bool,
-    secure_input_until: Option<Instant>,
-    default_microphone_until: Option<Instant>,
+    keyboard: Keyboard,
+    notes: Notes,
+    /// The note last shown, kept so its line can fade out after it ends.
+    last_note: Option<Note>,
     frame_at: Instant,
     reduced_motion: bool,
     theme: Theme,
@@ -116,7 +125,7 @@ impl Pill {
     fn new(
         updates: watch::Receiver<Snapshot>,
         levels: watch::Receiver<f32>,
-        secure_input: fn() -> bool,
+        keyboard: Keyboard,
         reduced_motion: bool,
         theme: Theme,
         opening: Opening,
@@ -137,9 +146,9 @@ impl Pill {
             phase_at,
             tray_hint_until: None,
             draw_hint_until: None,
-            secure_input,
-            secure_input_until: None,
-            default_microphone_until: None,
+            keyboard,
+            notes: Notes::default(),
+            last_note: None,
             frame_at: now,
             reduced_motion,
             theme,
@@ -191,27 +200,14 @@ impl Pill {
             self.wake = None;
             self.tray_hint_until = None;
         }
-        self.secure_input_until = secure_input_until(
+        self.notes.follow(
             previous,
             &snapshot,
             now,
-            self.secure_input_until,
-            self.secure_input,
+            self.keyboard.secure_input,
+            self.keyboard.globe_key,
         );
-        self.default_microphone_until = default_microphone_until(
-            previous,
-            &snapshot,
-            now,
-            self.default_microphone_until,
-            self.secure_input_until,
-        );
-        self.draw_hint_until = draw_hint_until(
-            previous,
-            &snapshot,
-            now,
-            self.draw_hint_until,
-            self.secure_input_until.max(self.default_microphone_until),
-        );
+        self.draw_hint_until = draw_hint_until(previous, &snapshot, now, self.draw_hint_until);
         if new_session {
             self.history.fill(0.0);
         }
@@ -248,8 +244,7 @@ impl Pill {
             since_phase: now.duration_since(self.phase_at),
             tray_hint: remaining(self.tray_hint_until),
             draw_hint: remaining(self.draw_hint_until),
-            secure_input: remaining(self.secure_input_until),
-            default_microphone: remaining(self.default_microphone_until),
+            note: self.notes.showing(now),
             hands_free: self.snapshot.hands_free,
             for_script: self.snapshot.for_script,
             show: self.snapshot.show,
@@ -335,6 +330,9 @@ impl Render for Pill {
         };
         self.frame_at = now;
         let scene = self.scene(now);
+        if let Some(showing) = scene.shown_note() {
+            self.last_note = Some(showing.note.clone());
+        }
         let moving = self.advance_springs(&scene, since_frame);
         let visible = scene.is_shown() || self.capsule.opacity.value() > 0.001;
         if !visible {
@@ -358,6 +356,10 @@ impl Render for Pill {
 struct Capsule {
     width: Spring,
     height: Spring,
+    /// The slot row's own width, which stays put while a note widens the capsule around it.
+    row: Spring,
+    /// How far the note line under the slot has opened, from 0 to 1.
+    note: Spring,
     opacity: Spring,
     lift: Spring,
     waveform: Spring,
@@ -369,6 +371,8 @@ impl Capsule {
         Self {
             width: Spring::new(RESTING_SIZE.width),
             height: Spring::new(RESTING_SIZE.height),
+            row: Spring::new(RESTING_SIZE.width),
+            note: Spring::new(0.0),
             opacity: Spring::new(0.0),
             lift: Spring::new(HIDDEN_LIFT),
             waveform: Spring::new(0.0),
@@ -381,6 +385,12 @@ impl Capsule {
         let size = scene.capsule_size();
         self.width.target = size.width;
         self.height.target = size.height;
+        self.row.target = scene.row_size().width;
+        self.note.target = if scene.shown_note().is_some() {
+            1.0
+        } else {
+            0.0
+        };
         self.opacity.target = if shown { 1.0 } else { 0.0 };
         self.lift.target = if shown { 0.0 } else { HIDDEN_LIFT };
         self.waveform.target = if scene.is_capturing() { 1.0 } else { 0.0 };
@@ -391,10 +401,14 @@ impl Capsule {
         };
     }
 
-    fn springs_mut(&mut self) -> [(&mut Spring, f32); 6] {
+    /// The capsule's height and the note's opening share a stiffness, so the slot row keeps its
+    /// height while a note opens or closes beneath it.
+    fn springs_mut(&mut self) -> [(&mut Spring, f32); 8] {
         [
             (&mut self.width, 28.0),
             (&mut self.height, 28.0),
+            (&mut self.row, 28.0),
+            (&mut self.note, 28.0),
             (&mut self.opacity, 40.0),
             (&mut self.lift, 32.0),
             (&mut self.waveform, 32.0),
@@ -410,8 +424,7 @@ struct Scene {
     since_phase: Duration,
     tray_hint: Option<Duration>,
     draw_hint: Option<Duration>,
-    secure_input: Option<Duration>,
-    default_microphone: Option<Duration>,
+    note: Option<Showing>,
     hands_free: bool,
     for_script: bool,
     show: bool,
@@ -445,12 +458,6 @@ impl Scene {
     fn content(&self) -> Content {
         if self.tray_hint.is_some() {
             return Content::TrayHint;
-        }
-        if self.shows_secure_input() {
-            return Content::SecureInput;
-        }
-        if self.shows_default_microphone() {
-            return Content::DefaultMicrophone;
         }
         match self.phase {
             Phase::Error => Content::Error,
@@ -487,12 +494,11 @@ impl Scene {
         self.draw_hint.is_some() && self.shows_clock() && !self.clock.near_limit
     }
 
-    fn shows_secure_input(&self) -> bool {
-        self.secure_input.is_some() && self.is_capturing() && !self.clock.near_limit
-    }
-
-    fn shows_default_microphone(&self) -> bool {
-        self.default_microphone.is_some() && self.phase.is_active() && !self.clock.near_limit
+    /// A note shows under the slot while the session it belongs to is under way.
+    fn shown_note(&self) -> Option<&Showing> {
+        self.note
+            .as_ref()
+            .filter(|_| self.phase.is_active() && self.tray_hint.is_none())
     }
 
     fn capsule_size(&self) -> Size<f32> {
@@ -502,15 +508,22 @@ impl Scene {
         if self.tray_hint.is_some() {
             return size(MESSAGE_WIDTH, 36.0);
         }
-        if self.shows_secure_input() || self.shows_default_microphone() {
-            return MESSAGE_SIZE;
+        let row = self.row_size();
+        if self.shown_note().is_some() {
+            size(row.width.max(NOTE_WIDTH), row.height + NOTE_HEIGHT)
+        } else {
+            row
         }
+    }
+
+    /// The slot row or message alone, without a note beneath it.
+    fn row_size(&self) -> Size<f32> {
         let mut bounds = match self.phase {
-            Phase::Starting => size(172.0, 38.0),
-            Phase::Recording | Phase::Stopping if self.clock.near_limit => size(262.0, 38.0),
-            Phase::Recording | Phase::Stopping if self.shows_draw_hint() => size(300.0, 38.0),
-            Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, 38.0),
-            Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, 38.0),
+            Phase::Starting => size(172.0, ROW_HEIGHT),
+            Phase::Recording | Phase::Stopping if self.clock.near_limit => size(262.0, ROW_HEIGHT),
+            Phase::Recording | Phase::Stopping if self.shows_draw_hint() => size(300.0, ROW_HEIGHT),
+            Phase::Recording | Phase::Stopping if self.shows_clock() => size(228.0, ROW_HEIGHT),
+            Phase::Recording | Phase::Stopping => size(RECORDING_WIDTH, ROW_HEIGHT),
             Phase::Processing => size(104.0, 32.0),
             Phase::Done => size(76.0, 34.0),
             Phase::Copied if self.labels_copy() => size(150.0, 34.0),
@@ -526,12 +539,10 @@ impl Scene {
 
     fn wake_after(&self) -> Option<Duration> {
         self.feedback().or(self.tray_hint).or_else(|| {
-            if self.is_capturing() {
+            let slot = if self.is_capturing() {
                 Some(
-                    [self.draw_hint, self.secure_input, self.default_microphone]
-                        .into_iter()
-                        .flatten()
-                        .fold(self.clock.next_tick, Duration::min),
+                    self.draw_hint
+                        .map_or(self.clock.next_tick, |hint| hint.min(self.clock.next_tick)),
                 )
             } else if self.phase == Phase::Processing {
                 SWEEP_DELAY
@@ -539,7 +550,9 @@ impl Scene {
                     .filter(|left| !left.is_zero())
             } else {
                 None
-            }
+            };
+            let note = self.shown_note().map(|showing| showing.left);
+            slot.into_iter().chain(note).min()
         })
     }
 
@@ -558,8 +571,6 @@ impl Scene {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Content {
     TrayHint,
-    SecureInput,
-    DefaultMicrophone,
     Error,
     Notice,
     Slot,
@@ -568,10 +579,7 @@ enum Content {
 
 impl Content {
     const fn is_inlaid(self) -> bool {
-        matches!(
-            self,
-            Self::SecureInput | Self::DefaultMicrophone | Self::Error | Self::Notice | Self::Slot
-        )
+        matches!(self, Self::Error | Self::Notice | Self::Slot)
     }
 }
 
@@ -608,7 +616,7 @@ impl fmt::Display for Clock {
 pub(crate) fn open(
     updates: watch::Receiver<Snapshot>,
     levels: watch::Receiver<f32>,
-    secure_input: fn() -> bool,
+    keyboard: Keyboard,
     reduced_motion: bool,
     theme: Theme,
     opening: Opening,
@@ -642,7 +650,7 @@ pub(crate) fn open(
                 Pill::new(
                     updates,
                     levels,
-                    secure_input,
+                    keyboard,
                     reduced_motion,
                     theme,
                     opening,
@@ -735,36 +743,113 @@ fn begins_feedback(previous: &Snapshot, snapshot: &Snapshot) -> bool {
         || (snapshot.phase == Phase::Error && snapshot.message != previous.message)
 }
 
-fn secure_input_until(
-    previous: &Snapshot,
-    snapshot: &Snapshot,
-    now: Instant,
-    until: Option<Instant>,
-    secure_input: impl FnOnce() -> bool,
-) -> Option<Instant> {
-    let same_session = snapshot.session == previous.session;
-    let was_recording = same_session && previous.phase == Phase::Recording;
-    if snapshot.phase == Phase::Recording && !was_recording {
-        now.checked_add(SECURE_INPUT_FOR).filter(|_| secure_input())
-    } else {
-        until.filter(|_| same_session)
+/// What macOS says about the keyboard, read on the UI thread as each recording opens.
+#[derive(Clone, Copy)]
+pub(crate) struct Keyboard {
+    pub(crate) secure_input: fn() -> Option<SecureInput>,
+    pub(crate) globe_key: fn() -> Option<GlobeKey>,
+}
+
+impl Keyboard {
+    pub(crate) const NATIVE: Self = Self {
+        secure_input: speakeasy_platform::secure_input,
+        globe_key: speakeasy_platform::globe_key,
+    };
+    /// For the demo and owned-window checks, whose notes must not depend on the host's keyboard.
+    pub(crate) const QUIET: Self = Self {
+        secure_input: || None,
+        globe_key: || None,
+    };
+}
+
+/// A line under the slot that never hides the recording it describes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Note {
+    /// macOS also acts on the Fn shortcut, which can take the text Speakeasy pastes.
+    GlobeKey(GlobeKey),
+    SecureInput {
+        holder: Option<SharedString>,
+    },
+    DefaultMicrophone,
+}
+
+impl Note {
+    const fn lasts(&self) -> Duration {
+        match self {
+            Self::GlobeKey(_) => GLOBE_KEY_FOR,
+            Self::SecureInput { .. } => SECURE_INPUT_FOR,
+            Self::DefaultMicrophone => DEFAULT_MICROPHONE_FOR,
+        }
     }
 }
 
-fn default_microphone_until(
-    previous: &Snapshot,
-    snapshot: &Snapshot,
-    now: Instant,
-    until: Option<Instant>,
-    secure_input_until: Option<Instant>,
-) -> Option<Instant> {
-    let same_session = snapshot.session == previous.session;
-    if snapshot.default_microphone && !(same_session && previous.default_microphone) {
-        secure_input_until
-            .map_or(now, |notice| notice.max(now))
-            .checked_add(DEFAULT_MICROPHONE_FOR)
-    } else {
-        until.filter(|_| same_session)
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct Showing {
+    note: Note,
+    left: Duration,
+}
+
+/// A session's notes, each shown in full after the one before.
+#[derive(Default)]
+struct Notes(Vec<Queued>);
+
+struct Queued {
+    note: Note,
+    from: Instant,
+    until: Instant,
+}
+
+impl Notes {
+    /// Queues the notes a snapshot raises, reading the keyboard once as each recording opens.
+    fn follow(
+        &mut self,
+        previous: &Snapshot,
+        snapshot: &Snapshot,
+        now: Instant,
+        secure_input: impl FnOnce() -> Option<SecureInput>,
+        globe_key: impl FnOnce() -> Option<GlobeKey>,
+    ) {
+        let same_session = snapshot.session == previous.session;
+        if !same_session {
+            self.0.clear();
+        }
+        let opened = snapshot.phase == Phase::Recording
+            && !(same_session && previous.phase == Phase::Recording);
+        // Secure input and a fallback microphone change this recording, so they come first.
+        if opened && let Some(secure) = secure_input() {
+            let holder = secure.holder.map(SharedString::from);
+            self.push(Note::SecureInput { holder }, now);
+        }
+        if snapshot.default_microphone && !(same_session && previous.default_microphone) {
+            self.push(Note::DefaultMicrophone, now);
+        }
+        // macOS starts its Dictation on a double press of Fn, the double-tap that locks
+        // hands-free; its other actions follow every press.
+        let locked = snapshot.hands_free && !(same_session && previous.hands_free);
+        if snapshot.globe_shortcut
+            && (opened || locked)
+            && let Some(action) = globe_key()
+            && (action == GlobeKey::Dictation && locked || action != GlobeKey::Dictation && opened)
+        {
+            self.push(Note::GlobeKey(action), now);
+        }
+    }
+
+    fn push(&mut self, note: Note, now: Instant) {
+        let from = self.0.last().map_or(now, |last| last.until.max(now));
+        if let Some(until) = from.checked_add(note.lasts()) {
+            self.0.push(Queued { note, from, until });
+        }
+    }
+
+    fn showing(&self, now: Instant) -> Option<Showing> {
+        self.0
+            .iter()
+            .find(|queued| (queued.from..queued.until).contains(&now))
+            .map(|queued| Showing {
+                note: queued.note.clone(),
+                left: queued.until.duration_since(now),
+            })
     }
 }
 
@@ -773,13 +858,10 @@ fn draw_hint_until(
     snapshot: &Snapshot,
     now: Instant,
     until: Option<Instant>,
-    notices_until: Option<Instant>,
 ) -> Option<Instant> {
     let until = until.filter(|_| snapshot.session == previous.session);
     if until.is_none() && snapshot.show && snapshot.phase == Phase::Recording {
-        notices_until
-            .map_or(now, |notice| notice.max(now))
-            .checked_add(DRAW_HINT_FOR)
+        now.checked_add(DRAW_HINT_FOR)
     } else {
         until
     }

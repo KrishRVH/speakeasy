@@ -713,6 +713,9 @@ impl Mac {
     const ESCAPE: i64 = 53;
     const F13: i64 = 105;
     const FUNCTION: i64 = 63;
+    /// Some keyboards, and remappers such as Karabiner-Elements, send the Globe key as this key
+    /// beside Fn's flag change; it is Fn itself, never another key or typing.
+    const GLOBE: i64 = 179;
     const KEYPAD_ENTER: i64 = 76;
     const LEFT_COMMAND: i64 = 55;
     const LEFT_CONTROL: i64 = 59;
@@ -762,7 +765,8 @@ impl Mac {
     }
 
     pub(super) const fn types(event: MacEvent, decision: &Decision) -> bool {
-        matches!(event, MacEvent::Key { down: true, .. }) && !decision.swallows()
+        matches!(event, MacEvent::Key { down: true, code, .. } if code != Self::GLOBE)
+            && !decision.swallows()
     }
 
     fn decide(&mut self, event: MacEvent, at: Instant) -> Decision {
@@ -810,6 +814,9 @@ impl Mac {
                 self.taps.interrupt();
                 Decision::pass(None)
             },
+            MacEvent::Key {
+                code: Self::GLOBE, ..
+            } if self.shortcut == crate::MacShortcut::Function => Decision::pass(None),
             MacEvent::Key {
                 code, down, repeat, ..
             } => {
