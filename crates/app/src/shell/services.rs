@@ -63,7 +63,7 @@ enum Restart {
 }
 
 type Purged = Result<(), String>;
-pub(super) type ResetReceipt = async_channel::Receiver<Purged>;
+type ResetReceipt = async_channel::Receiver<Purged>;
 
 struct Purge {
     settings: PathBuf,
@@ -291,9 +291,9 @@ impl Services {
     /// Records the next shortcut pressed, which needs dictation running outside the preview.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub(super) fn record_shortcut(&self) -> Option<async_channel::Receiver<Recorded>> {
-        self.can_record_shortcut()
-            .then(|| self.lifecycle.active())
-            .flatten()
+        self.lifecycle
+            .active()
+            .filter(|_| self.can_record_shortcut())
             .map(|owners| owners.monitor.record_shortcut())
     }
 
