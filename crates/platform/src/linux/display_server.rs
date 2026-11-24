@@ -9,7 +9,7 @@ use wayland_client::{
 
 const LAYER_SHELL: &str = "zwlr_layer_shell_v1";
 
-const NO_OVERLAY: &str = "This Wayland desktop cannot keep the pill above other windows, and it runs no Xwayland. Enable Xwayland, or use a compositor with the wlr-layer-shell protocol, then start Speakeasy again.";
+const NO_OVERLAY: &str = "This Wayland desktop can't keep the pill above other windows, and it runs no Xwayland. Enable Xwayland, or use a compositor with the wlr-layer-shell protocol, then start Speakeasy again.";
 
 const NO_SESSION: &str = "No desktop session found: WAYLAND_DISPLAY and DISPLAY are unset. Start Speakeasy from a Wayland or X11 desktop session.";
 

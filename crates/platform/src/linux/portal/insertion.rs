@@ -403,7 +403,7 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
             "Direct text input is paused on this desktop. Set “Insert text by” to a Paste option in Settings."
         },
         TextBlocked::NullCharacter => {
-            "Direct input cannot contain a null character. Set “Insert text by” to a Paste option in Settings."
+            "Direct input can't contain a null character. Set “Insert text by” to a Paste option in Settings."
         },
     })
 }
