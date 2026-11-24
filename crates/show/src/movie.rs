@@ -39,17 +39,11 @@ mod trun {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MovieError {
-    Invalid(&'static str),
-    NoFragment,
-}
+pub struct MovieError(&'static str);
 
 impl fmt::Display for MovieError {
     fn fmt(&self, out: &mut fmt::Formatter<'_>) -> fmt::Result {
-        out.write_str(match self {
-            Self::Invalid(message) => message,
-            Self::NoFragment => "No complete movie fragment survived",
-        })
+        out.write_str(self.0)
     }
 }
 
@@ -151,7 +145,7 @@ impl MoviePrefix {
             }
             if atom.kind != *b"moof" || atom.end.saturating_sub(position) > HEADER_LIMIT {
                 if result.samples.is_empty() {
-                    return Err(MovieError::Invalid("Movie first fragment is unsupported").into());
+                    return Err(MovieError("Movie first fragment is unsupported").into());
                 }
                 result.truncated = true;
                 break;
@@ -162,9 +156,7 @@ impl MoviePrefix {
             };
             if data.kind != *b"mdat" {
                 if result.samples.is_empty() {
-                    return Err(
-                        MovieError::Invalid("Movie first fragment has no media data").into(),
-                    );
+                    return Err(MovieError("Movie first fragment has no media data").into());
                 }
                 result.truncated = true;
                 break;
@@ -196,10 +188,10 @@ impl MoviePrefix {
             position = data.end;
             sequence = sequence
                 .checked_add(1)
-                .ok_or(MovieError::Invalid("Movie fragment sequence overflows"))?;
+                .ok_or(MovieError("Movie fragment sequence overflows"))?;
         }
         if result.samples.is_empty() {
-            return Err(MovieError::NoFragment.into());
+            return Err(MovieError("No complete movie fragment survived").into());
         }
         result.duration = duration(decoded, track.timescale)?;
         Ok(result)
@@ -210,9 +202,9 @@ fn duration(ticks: u64, timescale: u32) -> Result<Duration, MovieError> {
     let nanos = u128::from(ticks)
         .saturating_mul(1_000_000_000)
         .checked_div(u128::from(timescale))
-        .ok_or(MovieError::Invalid("Movie timescale is zero"))?;
+        .ok_or(MovieError("Movie timescale is zero"))?;
     Ok(Duration::from_nanos(u64::try_from(nanos).map_err(
-        |_too_long| MovieError::Invalid("Movie duration overflows"),
+        |_too_long| MovieError("Movie duration overflows"),
     )?))
 }
 
@@ -226,7 +218,7 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
         let requested = range
             .end
             .checked_sub(range.start)
-            .ok_or(MovieError::Invalid("Movie range is reversed"))?;
+            .ok_or(MovieError("Movie range is reversed"))?;
         require(
             range.end <= self.length,
             "Movie metadata range exceeds its file",
@@ -278,7 +270,7 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
     fn initialize(&mut self) -> Result<(Track, u64), E> {
         let ftyp = self
             .atom(0, false)?
-            .ok_or(MovieError::Invalid("Movie has no complete file type"))?;
+            .ok_or(MovieError("Movie has no complete file type"))?;
         require(
             ftyp.kind == *b"ftyp" && ftyp.end <= HEADER_LIMIT,
             "Movie file type is invalid",
@@ -303,7 +295,7 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
         for _ in 0..32 {
             let atom = self
                 .atom(position, false)?
-                .ok_or(MovieError::Invalid("Movie initialization is incomplete"))?;
+                .ok_or(MovieError("Movie initialization is incomplete"))?;
             require(
                 atom.end <= HEADER_LIMIT,
                 "Movie initialization is too large",
@@ -318,7 +310,7 @@ impl<E: From<MovieError>, F: FnMut(Range<u64>) -> Result<Vec<u8>, E>> Input<F> {
             )?;
             position = atom.end;
         }
-        Err(MovieError::Invalid("Movie initialization has too many boxes").into())
+        Err(MovieError("Movie initialization has too many boxes").into())
     }
 }
 
@@ -399,7 +391,7 @@ fn fragment(
         let at = match time.word()? {
             0 => u64::from(time.word()?),
             0x0100_0000 => time.wide()?,
-            _ => return Err(MovieError::Invalid("Movie decode time is unsupported")),
+            _ => return Err(MovieError("Movie decode time is unsupported")),
         };
         require(
             time.is_empty() && at == decoded,
@@ -462,7 +454,7 @@ fn fragment(
             let end = result
                 .decoded
                 .checked_add(u64::from(duration))
-                .ok_or(MovieError::Invalid("Movie decode time overflows"))?;
+                .ok_or(MovieError("Movie decode time overflows"))?;
             require(
                 end <= u64::from(track.timescale).saturating_mul(DURATION_LIMIT.as_secs()),
                 "Movie duration exceeds its limit",
@@ -472,7 +464,7 @@ fn fragment(
             next = next
                 .checked_add(u64::from(size))
                 .filter(|end| *end <= data.end)
-                .ok_or(MovieError::Invalid("Movie sample exceeds its data box"))?;
+                .ok_or(MovieError("Movie sample exceeds its data box"))?;
         }
         require(run.is_empty(), "Movie sample table has trailing data")?;
     }

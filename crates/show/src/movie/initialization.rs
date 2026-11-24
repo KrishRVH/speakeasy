@@ -99,7 +99,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let mut display = Fields::new(
         track_header
             .get(track_header.len().saturating_sub(8)..)
-            .ok_or(MovieError::Invalid("Movie display size is missing"))?,
+            .ok_or(MovieError("Movie display size is missing"))?,
     );
     require(
         [display.word()?, display.word()?] == size.map(|edge| edge << 16),
@@ -142,7 +142,7 @@ fn versioned<'a>(
     let times = match fields.word()? >> 24 {
         0 if bytes.len() == short => 8,
         1 if bytes.len() == long => 16,
-        _ => return Err(MovieError::Invalid(invalid)),
+        _ => return Err(MovieError(invalid)),
     };
     fields.skip(times)?;
     Ok(fields)

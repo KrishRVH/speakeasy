@@ -11,7 +11,7 @@ pub(super) fn require(valid: bool, message: &'static str) -> Result<(), MovieErr
     if valid {
         Ok(())
     } else {
-        Err(MovieError::Invalid(message))
+        Err(MovieError(message))
     }
 }
 
@@ -75,7 +75,7 @@ impl<'a> Fields<'a> {
     }
 }
 
-const INCOMPLETE: MovieError = MovieError::Invalid("Movie metadata is incomplete");
+const INCOMPLETE: MovieError = MovieError("Movie metadata is incomplete");
 
 pub(super) struct Child<'a> {
     pub kind: [u8; 4],
@@ -102,7 +102,7 @@ pub(super) fn children(mut bytes: &[u8]) -> Result<Vec<Child<'_>>, MovieError> {
         let payload = length
             .checked_sub(header)
             .and_then(|length| usize::try_from(length).ok())
-            .ok_or(MovieError::Invalid("Movie child box length is invalid"))?;
+            .ok_or(MovieError("Movie child box length is invalid"))?;
         found.push(Child {
             kind,
             bytes: fields.take(payload)?,
@@ -119,9 +119,9 @@ pub(super) fn child<'a, 'b>(
     kind: [u8; 4],
 ) -> Result<&'b Child<'a>, MovieError> {
     let mut matching = boxes.iter().filter(|candidate| candidate.kind == kind);
-    let found = matching.next().ok_or(MovieError::Invalid(
-        "Movie metadata is missing a required box",
-    ))?;
+    let found = matching
+        .next()
+        .ok_or(MovieError("Movie metadata is missing a required box"))?;
     require(
         matching.next().is_none(),
         "Movie metadata repeats a required box",
