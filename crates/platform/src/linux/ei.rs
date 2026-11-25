@@ -166,8 +166,14 @@ impl Sender {
         let status = unsafe { (api.ei_setup_backend_fd)(context.as_ptr(), fd.into_raw_fd()) };
         ensure!(status == 0, "Can't connect the Wayland input sender");
 
-        // The readiness registration watches a duplicate of libei's descriptor.
-        let readiness = unsafe { register_readiness((api.ei_get_fd)(context.as_ptr())) }?;
+        let descriptor = unsafe { (api.ei_get_fd)(context.as_ptr()) };
+        ensure!(
+            descriptor >= 0,
+            "Desktop connection has no valid file descriptor"
+        );
+        // libei keeps its descriptor open while `context` lives; the registration watches a
+        // duplicate.
+        let readiness = super::watch_readable(unsafe { BorrowedFd::borrow_raw(descriptor) })?;
         Ok(Self {
             keyboard: None,
             text: None,
@@ -624,12 +630,6 @@ fn num_lock_modifiers(keymap: &xkb::Keymap) -> u32 {
     state.update_key(key, xkb::KeyDirection::Down);
     state.update_key(key, xkb::KeyDirection::Up);
     state.serialize_mods(xkb::STATE_MODS_LOCKED)
-}
-
-unsafe fn register_readiness(fd: RawFd) -> anyhow::Result<AsyncFd<OwnedFd>> {
-    ensure!(fd >= 0, "Desktop connection has no valid file descriptor");
-
-    super::watch_readable(unsafe { BorrowedFd::borrow_raw(fd) })
 }
 
 unsafe fn device_keymap(api: &Api, device: *mut EiDevice) -> Option<xkb::Keymap> {

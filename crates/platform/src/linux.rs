@@ -247,7 +247,8 @@ async fn stop_requested(stopping: &Receiver<Infallible>, input: &InputSender) {
 
 fn watch_readable(fd: BorrowedFd<'_>) -> anyhow::Result<AsyncFd<OwnedFd>> {
     let duplicate = fd.try_clone_to_owned()?;
-
+    // SAFETY: the registration owns the duplicate, so it stays open and unchanged until the
+    // `AsyncFd` drops.
     Ok(unsafe { AsyncFd::register_with_interest(duplicate, Interest::READABLE) }?)
 }
 
