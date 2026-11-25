@@ -583,10 +583,6 @@ mod tests {
 
     use super::*;
 
-    pub(super) fn fixture_session() -> anyhow::Result<OwnedObjectPath> {
-        Ok(format!("{DESKTOP}/session/fixture").try_into()?)
-    }
-
     #[test]
     fn only_a_portal_without_the_host_registry_skips_registration() -> anyhow::Result<()> {
         let call = Message::method_call(DESKTOP, "Register")?

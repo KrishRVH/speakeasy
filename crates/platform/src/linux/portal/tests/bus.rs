@@ -10,7 +10,7 @@ use async_channel::Sender;
 use tokio::task::{JoinHandle, LocalSet};
 use zbus::{connection::Builder, message::Type};
 
-use super::{super::*, fixture_session};
+use super::super::*;
 use crate::{
     Delivery, Enter, FocusReport, InsertPermit, Inserted, PATIENCE,
     insertion::Reply,
@@ -21,6 +21,10 @@ use crate::{
 };
 
 const TEXT: &str = "text/plain;charset=utf-8";
+
+fn fixture_session() -> anyhow::Result<OwnedObjectPath> {
+    Ok(format!("{DESKTOP}/session/fixture").try_into()?)
+}
 
 struct Bus {
     daemon: Child,
