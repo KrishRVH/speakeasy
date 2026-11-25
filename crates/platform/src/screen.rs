@@ -22,6 +22,14 @@ const POINTER_INTERVAL: Duration = Duration::from_millis(8);
 
 const WINDOW_STEP: Duration = Duration::from_millis(10);
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) const NO_POINTER: &str = "Can't find the pointer. Try again.";
+
+/// The native capture can't leave Speakeasy's own windows out of its frames.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+pub(crate) const EXPOSED: &str =
+    "Can't keep Speakeasy's windows out of the Show. Start the Show again.";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Scope {
     Screen,

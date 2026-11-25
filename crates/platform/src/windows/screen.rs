@@ -83,8 +83,6 @@ use crate::{
     },
 };
 
-const NO_POINTER: &str = "Can't find the pointer. Try again.";
-
 /// The longest pause between capture passes; a pass's own work counts toward it.
 const POLL: Duration = Duration::from_millis(10);
 
@@ -160,7 +158,7 @@ impl Window {
 }
 
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
-    let Some(window) = top_level_at(pointer_location().context(NO_POINTER)?) else {
+    let Some(window) = top_level_at(pointer_location().context(screen::NO_POINTER)?) else {
         return Ok(None);
     };
     let shell = [DESKTOP_CLASSES, BAR_CLASSES];
@@ -254,7 +252,7 @@ fn frame_bounds(window: HWND) -> Option<RECT> {
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
-    let pointer = pointer_location().context(NO_POINTER)?;
+    let pointer = pointer_location().context(screen::NO_POINTER)?;
 
     describe(unsafe { MonitorFromPoint(pointer, MONITOR_DEFAULTTONEAREST) })
         .context("Can't measure the display under the pointer")
@@ -733,9 +731,7 @@ impl fmt::Display for Failure {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Window(gone) => gone.fmt(f),
-            Self::Exposed => {
-                f.write_str("Can't keep Speakeasy's windows out of the Show. Start the Show again.")
-            },
+            Self::Exposed => f.write_str(screen::EXPOSED),
             Self::DisplayLost => {
                 f.write_str("The recorded display was disconnected. Start the Show again.")
             },

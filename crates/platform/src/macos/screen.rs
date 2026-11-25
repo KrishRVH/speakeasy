@@ -55,8 +55,6 @@ use crate::{
     },
 };
 
-const NO_POINTER: &str = "Can't find the pointer. Try again.";
-
 /// How long capture waits for a native answer, a first frame, or stop confirmation.
 const PATIENCE: Duration = Duration::from_secs(5);
 
@@ -97,9 +95,7 @@ impl fmt::Display for Failure {
             Self::DisplayLost => {
                 "The recorded display is no longer available. Start the Show again."
             },
-            Self::Exposed => {
-                "Can't keep Speakeasy's windows out of the Show. Start the Show again."
-            },
+            Self::Exposed => screen::EXPOSED,
         };
         f.write_str(message)
     }
@@ -125,7 +121,7 @@ struct Described {
 }
 
 pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(Window, Part)>> {
-    let pointer = pointer_location().context(NO_POINTER)?;
+    let pointer = pointer_location().context(screen::NO_POINTER)?;
     Ok(on_screen_windows()
         .context("Can't list windows. Try again.")?
         .find(|window| {
@@ -256,7 +252,7 @@ fn describe(window: &CFDictionary<CFString, CFType>) -> Option<Described> {
 }
 
 pub(crate) fn display_under_pointer() -> anyhow::Result<screen::Display> {
-    let [x, y] = pointer_location().context(NO_POINTER)?;
+    let [x, y] = pointer_location().context(screen::NO_POINTER)?;
     let mut id = kCGNullDirectDisplay;
     let mut found = 0;
 
