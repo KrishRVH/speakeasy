@@ -197,7 +197,7 @@ impl Settings {
                 cancelled: false, ..
             } => "Downloading and verifying the update…".into(),
             #[cfg(target_os = "windows")]
-            Update::Downloading { .. } => "Cancelling the update download…".into(),
+            Update::Downloading { .. } => updates::CANCELLING.into(),
             #[cfg(target_os = "windows")]
             Update::Ready(_) => updates::VERIFIED.into(),
         };

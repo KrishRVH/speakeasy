@@ -13,6 +13,9 @@ pub(super) const CHECKING: &str = "Checking the latest GitHub release…";
 pub(super) const VERIFIED: &str = "Update verified. Installing restarts Speakeasy.";
 
 #[cfg(target_os = "windows")]
+pub(super) const CANCELLING: &str = "Cancelling the update download…";
+
+#[cfg(target_os = "windows")]
 const CANCELLED: &str = "Update download cancelled.";
 
 #[derive(Default)]
@@ -226,7 +229,7 @@ impl Settings {
         match &self.update {
             Update::Downloading { .. } => {
                 self.update.cancel();
-                self.notice = Some(Notice::Note("Cancelling update download…".into()));
+                self.notice = Some(Notice::Note(CANCELLING.into()));
             },
             Update::Ready(installer) => {
                 self.update = Update::Available(installer.version());
