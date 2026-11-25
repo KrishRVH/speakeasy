@@ -20,7 +20,7 @@ use crate::{
     linux::{
         COPIED_FOR_MANUAL_PASTE, NO_PASTE_BINDING,
         ei::{self, PasteBlocked, TextBlocked},
-        stop_requested, x11,
+        focus, stop_requested, x11,
     },
 };
 
@@ -377,7 +377,7 @@ fn insert_direct(sender: Option<&mut ei::Sender>, request: &Insertion, external:
     if !request.permit.active() {
         return Inserted::Cancelled;
     }
-    if let Some(outcome) = Delivery::Direct.check_focus(external && !request.own_focus.held()) {
+    if let Some(outcome) = Delivery::Direct.check_focus(focus(request, external)) {
         return outcome;
     }
     let ready = match sender
@@ -421,7 +421,7 @@ fn finish_paste(
     if !request.permit.active() {
         return Inserted::Cancelled;
     }
-    if let Some(outcome) = Delivery::Paste.check_focus(external && !request.own_focus.held()) {
+    if let Some(outcome) = Delivery::Paste.check_focus(focus(request, external)) {
         return outcome;
     }
     if paste == LinuxPaste::Manual {
@@ -474,7 +474,10 @@ const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{FocusReport, OwnFocus, insertion::Reply};
+    use crate::{
+        FocusReport, OwnFocus,
+        insertion::{Focus, Reply},
+    };
 
     fn insertion(
         text: &str,
@@ -535,7 +538,7 @@ mod tests {
         let request = |delivery| insertion("fixture", &permit, delivery, report.subscribe());
         assert_eq!(
             Some(insert_direct(None, &request(Delivery::Direct), true)),
-            Delivery::Direct.check_focus(false),
+            Delivery::Direct.check_focus(Focus::Own),
             "Direct input ignored Speakeasy's own focus"
         );
         assert_eq!(
@@ -545,7 +548,7 @@ mod tests {
                 LinuxPaste::Standard,
                 true,
             )),
-            Delivery::Paste.check_focus(false),
+            Delivery::Paste.check_focus(Focus::Own),
             "Paste ignored Speakeasy's own focus"
         );
         assert!(permit.commit(), "Refused input spent its authority");

@@ -1,19 +1,29 @@
 use std::{
     num::NonZeroU32,
+    ptr::null_mut,
     thread,
     time::{Duration, Instant},
 };
 
 use anyhow::Context as _;
-use windows_sys::Win32::UI::{
-    Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_SHIFT, VK_V},
-    WindowsAndMessaging::GetForegroundWindow,
+use windows_sys::Win32::{
+    Foundation::{FALSE, HWND},
+    UI::{
+        Input::KeyboardAndMouse::{INPUT, VK_CONTROL, VK_RETURN, VK_SHIFT, VK_V},
+        WindowsAndMessaging::{
+            GUITHREADINFO, GetForegroundWindow, GetGUIThreadInfo, GetShellWindow,
+            GetWindowThreadProcessId,
+        },
+    },
 };
 
-use super::{is_key_down, press, release, send_input, type_unit, window_process};
+use super::{
+    BAR_CLASSES, DESKTOP_CLASSES, class_name, is_key_down, press, release, send_input, type_unit,
+    window_process,
+};
 use crate::{
     ClipboardContent, Inserted, clipboard,
-    insertion::{self, NativeInsert, Typed},
+    insertion::{self, Focus, NativeInsert, Typed},
 };
 
 /// Formats whose zero DWORD keeps a copy out of clipboard history and cloud sync.
@@ -34,6 +44,9 @@ const HANDLES: [u32; 6] = [
     clipboard_win::formats::CF_DSPMETAFILEPICT,
     clipboard_win::formats::CF_DSPENHMETAFILE,
 ];
+
+/// The taskbar's hidden-icons flyout, a XAML island the shell owns.
+const OVERFLOW_CLASS: &str = "TopLevelWindowForOverflowXamlIsland";
 
 /// `CF_PRIVATEFIRST` through `CF_GDIOBJLAST`, whose data are handles too.
 const PRIVATE_AND_GDI: std::ops::RangeInclusive<u32> = 0x0200..=0x03FF;
@@ -208,9 +221,14 @@ impl NativeInsert for Insert {
         })
     }
 
-    fn external_focus(&mut self) -> bool {
-        let focused = unsafe { GetForegroundWindow() };
-        window_process(focused).is_some_and(|process| process != std::process::id())
+    fn focus(&mut self) -> Focus {
+        let foreground = unsafe { GetForegroundWindow() };
+        match window_process(foreground) {
+            None => Focus::Nowhere,
+            Some(process) if process == std::process::id() => Focus::Own,
+            Some(process) if is_shell_surface(foreground, process) => Focus::Nowhere,
+            Some(_) => Focus::Elsewhere,
+        }
     }
 
     fn target(&mut self) -> Option<usize> {
@@ -235,6 +253,39 @@ impl NativeInsert for Insert {
             keys.blocked
         })
     }
+}
+
+/// Whether the foreground is the shell's desktop, a taskbar, or the taskbar's overflow flyout.
+fn is_shell_surface(window: HWND, process: u32) -> bool {
+    let shell = unsafe { GetShellWindow() };
+    window_process(shell) == Some(process)
+        && takes_no_text(&class_name(window), focused_class(window).as_deref())
+}
+
+/// A paste sent to the desktop or a taskbar is lost; a rename box on the desktop still takes one.
+fn takes_no_text(class: &str, focused: Option<&str>) -> bool {
+    let surface =
+        DESKTOP_CLASSES.contains(&class) || BAR_CLASSES.contains(&class) || class == OVERFLOW_CLASS;
+    surface && !focused.is_some_and(is_edit_class)
+}
+
+/// Text edit controls register as `Edit`, `RichEdit20W`, or `RICHEDIT50W`.
+fn is_edit_class(class: &str) -> bool {
+    class.eq_ignore_ascii_case("Edit")
+        || class
+            .get(.."RichEdit".len())
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("RichEdit"))
+}
+
+/// The class of the control focused on the window's thread.
+fn focused_class(window: HWND) -> Option<String> {
+    let mut info = GUITHREADINFO {
+        cbSize: u32::try_from(size_of::<GUITHREADINFO>()).ok()?,
+        ..Default::default()
+    };
+    let thread = unsafe { GetWindowThreadProcessId(window, null_mut()) };
+    let read = unsafe { GetGUIThreadInfo(thread, &raw mut info) } != FALSE;
+    (read && !info.hwndFocus.is_null()).then(|| class_name(info.hwndFocus))
 }
 
 fn private_formats() -> [Option<u32>; 2] {

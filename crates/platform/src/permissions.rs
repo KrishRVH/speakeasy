@@ -35,6 +35,23 @@ impl Permissions {
     }
 }
 
+/// macOS 27.3 grants posting synthetic keys apart from Accessibility, under System & App
+/// Protection Override, and `CGEventPost` silently drops them without it; earlier versions grant
+/// both together. The answer holds from launch, so a new grant takes effect after a restart.
+#[cfg(target_os = "macos")]
+pub(crate) fn may_post_keys() -> bool {
+    use objc2_core_graphics::CGPreflightPostEventAccess;
+    use objc2_foundation::{NSOperatingSystemVersion, NSProcessInfo};
+
+    let split = NSOperatingSystemVersion {
+        majorVersion: 27,
+        minorVersion: 3,
+        patchVersion: 0,
+    };
+    !NSProcessInfo::processInfo().isOperatingSystemAtLeastVersion(split)
+        || CGPreflightPostEventAccess()
+}
+
 #[cfg(target_os = "macos")]
 fn microphone() -> Permission {
     use objc2_av_foundation::{AVAuthorizationStatus, AVCaptureDevice, AVMediaTypeAudio};

@@ -47,6 +47,27 @@ fn insert() -> Insert {
 }
 
 #[test]
+fn the_desktop_and_taskbars_take_no_text_but_a_rename_box_does() {
+    for class in DESKTOP_CLASSES
+        .into_iter()
+        .chain(BAR_CLASSES)
+        .chain([OVERFLOW_CLASS])
+    {
+        assert!(takes_no_text(class, None), "A paste to {class} was sent");
+    }
+    assert!(
+        !takes_no_text("CabinetWClass", None),
+        "File Explorer refused a paste"
+    );
+    for edit in ["Edit", "RICHEDIT50W"] {
+        assert!(
+            !takes_no_text("Progman", Some(edit)),
+            "The desktop refused a paste into its {edit} rename box"
+        );
+    }
+}
+
+#[test]
 fn typed_line_breaks_are_shift_enter_and_text_keeps_utf16() -> anyhow::Result<()> {
     let line_break = [
         (VK_SHIFT, 0, 0),

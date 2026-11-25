@@ -32,8 +32,8 @@ use windows_sys::{
                 VIRTUAL_KEY,
             },
             WindowsAndMessaging::{
-                GetWindowLongW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK, MessageBoxW,
-                SPI_GETCLIENTAREAANIMATION, SetWindowLongW, SystemParametersInfoW,
+                GetClassNameW, GetWindowLongW, GetWindowThreadProcessId, MB_ICONERROR, MB_OK,
+                MessageBoxW, SPI_GETCLIENTAREAANIMATION, SetWindowLongW, SystemParametersInfoW,
                 WINDOW_LONG_PTR_INDEX,
             },
         },
@@ -51,6 +51,12 @@ pub(crate) use self::{
 const OWN_INPUT: usize = 0x5350_4541;
 
 const BASE_DPI: u32 = 96;
+
+/// The shell's desktop window classes.
+const DESKTOP_CLASSES: [&str; 2] = ["Progman", "WorkerW"];
+
+/// The shell's taskbar window classes, primary and secondary.
+const BAR_CLASSES: [&str; 2] = ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
 fn is_key_down(key: VIRTUAL_KEY) -> bool {
     unsafe { GetAsyncKeyState(i32::from(key)) < 0 }
@@ -199,6 +205,20 @@ fn window_process(window: HWND) -> Option<u32> {
 
 fn is_own_window(window: HWND) -> bool {
     window_process(window) == Some(std::process::id())
+}
+
+fn class_name(window: HWND) -> String {
+    let mut class = [0_u16; 256];
+
+    let length = unsafe {
+        GetClassNameW(
+            window,
+            class.as_mut_ptr(),
+            i32::try_from(class.len()).unwrap_or_default(),
+        )
+    };
+    let length = usize::try_from(length).unwrap_or_default();
+    String::from_utf16_lossy(class.get(..length).unwrap_or_default())
 }
 
 fn to_wide(text: &str) -> Vec<u16> {

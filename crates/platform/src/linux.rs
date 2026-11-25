@@ -28,7 +28,7 @@ pub use self::{
 };
 use super::{
     DesktopOptions, Input, InputSender, Inserted, Inserter, LinuxPaste, OwnFocus, OwnedThread,
-    insertion::{Insertion, abandon_queued},
+    insertion::{Focus, Insertion, abandon_queued},
 };
 
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
@@ -40,6 +40,16 @@ const NO_PASTE_BINDING: Inserted = Inserted::Copied(
 );
 
 const COPIED_FOR_MANUAL_PASTE: Inserted = Inserted::Copied("Text copied. Paste into your editor.");
+
+/// Where a delivery lands. The desktop only tells whether Speakeasy's own window is focused, and a
+/// failed query fails closed, as if it were.
+fn focus(request: &Insertion, external: bool) -> Focus {
+    if external && !request.own_focus.held() {
+        Focus::Elsewhere
+    } else {
+        Focus::Own
+    }
+}
 
 #[derive(Clone, Copy)]
 enum PasteKeys {

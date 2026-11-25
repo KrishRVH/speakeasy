@@ -690,10 +690,14 @@ impl insertion::NativeInsert for Insert {
             .collect()
     }
 
-    fn external_focus(&mut self) -> bool {
-        NSWorkspace::sharedWorkspace()
-            .frontmostApplication()
-            .is_some_and(|app| !is_own_process(app.processIdentifier().into()))
+    fn focus(&mut self) -> insertion::Focus {
+        use insertion::Focus;
+
+        match NSWorkspace::sharedWorkspace().frontmostApplication() {
+            None => Focus::Nowhere,
+            Some(app) if is_own_process(app.processIdentifier().into()) => Focus::Own,
+            Some(_) => Focus::Elsewhere,
+        }
     }
 
     fn target(&mut self) -> Option<i32> {
@@ -724,6 +728,22 @@ impl insertion::NativeInsert for Insert {
 
     fn shortcut_released(&mut self) -> bool {
         !modifiers_for(self.shortcut).any()
+    }
+
+    fn refused(&mut self, delivery: insertion::Delivery) -> Option<Inserted> {
+        if crate::permissions::may_post_keys() {
+            return None;
+        }
+        // Lists Speakeasy in the pane and posts macOS's own notification pointing there.
+        cg::CGRequestPostEventAccess();
+        Some(match delivery {
+            insertion::Delivery::Paste => Inserted::Copied(
+                "Text copied. macOS blocks Speakeasy's paste: allow Speakeasy in System Settings › Privacy & Security › System & App Protection Override, then restart Speakeasy.",
+            ),
+            insertion::Delivery::Direct => Inserted::Unavailable(
+                "macOS blocks Speakeasy's typing: allow Speakeasy in System Settings › Privacy & Security › System & App Protection Override, then restart Speakeasy. Clipboard preserved.",
+            ),
+        })
     }
 
     fn send(&mut self, keys: Vec<CGEvent>) -> anyhow::Result<Inserted> {

@@ -221,7 +221,13 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
 - Readiness follows the first captured buffer. Startup feedback does not imply that speech before
   that buffer can be recovered.
 - Insertion does not steal focus. OS submission is the observable result; success in every editor
-  cannot be inferred from submitting keystrokes.
+  cannot be inferred from submitting keystrokes. Nothing is pasted or typed into a Speakeasy window,
+  or on Windows into the desktop, a taskbar, or its overflow flyout, which drop it; a desktop rename
+  box still takes text. A paste then leaves the text copied and says where to put it. macOS 27.3 and
+  later grant posting keys apart from Accessibility, under System & App Protection Override; without
+  that grant a paste leaves the text copied, the pill names that pane, and macOS is asked to list
+  Speakeasy there; Settings' Accessibility row does not cover it. The grant applies after a restart.
+  No 27.3 device has verified this yet.
 - On Windows and macOS, a dictation delivered straight after the last one starts with one space when
   the earlier text ended a word and the new one does not open with closing punctuation. Straight
   after means the same window (macOS: the same app), no key typed, and no pointer movement in

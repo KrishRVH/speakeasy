@@ -22,7 +22,7 @@ use crate::{
         Insertion, MODIFIER_WAIT, PASTE_AFTER_RELEASE, Reply, abandon_queued,
         wait_for_released_modifiers,
     },
-    linux::{COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, PasteChord, PasteKeys},
+    linux::{self, COPIED_FOR_MANUAL_PASTE, HostSession, NO_PASTE_BINDING, PasteChord, PasteKeys},
 };
 
 const SECOND_LAYOUT: Inserted = Inserted::Copied(
@@ -169,8 +169,7 @@ impl Paster {
         }
         // Read after those round trips: modifiers pressed meanwhile would join the synthetic chord.
         let released = !modifiers_held(&self.clipboard, &self.keyboard)?;
-        if let Some(outcome) =
-            Delivery::Paste.preflight(external && !request.own_focus.held(), released)
+        if let Some(outcome) = Delivery::Paste.preflight(linux::focus(request, external), released)
         {
             return Ok(settle_copy(&request.permit, outcome));
         }

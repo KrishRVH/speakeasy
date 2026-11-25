@@ -9,8 +9,8 @@ use anyhow::anyhow;
 use async_channel::Receiver;
 
 use super::{
-    Delivery, Enter, INSERTION_STOPPED, Inserted, Inserter, Insertion, MODIFIER_WAIT, OwnFocus,
-    continuation::Continuation, wait_for_released_modifiers,
+    Delivery, Enter, Focus, INSERTION_STOPPED, Inserted, Inserter, Insertion, MODIFIER_WAIT,
+    OwnFocus, continuation::Continuation, wait_for_released_modifiers,
 };
 use crate::{InputSender, InsertPermit, OwnedThread};
 
@@ -190,7 +190,8 @@ pub(crate) trait NativeInsert {
 
     fn return_keys(&mut self) -> anyhow::Result<Self::Keys>;
 
-    fn external_focus(&mut self) -> bool;
+    /// Where the keyboard focus is; Speakeasy's own windows are `Focus::Own`.
+    fn focus(&mut self) -> Focus;
 
     fn target(&mut self) -> Option<Self::Target>;
 
@@ -198,6 +199,11 @@ pub(crate) trait NativeInsert {
     fn activity(&mut self) -> Option<Self::Activity>;
 
     fn shortcut_released(&mut self) -> bool;
+
+    /// The system's refusal to take synthetic input at all, checked before anything is sent.
+    fn refused(&mut self, _delivery: Delivery) -> Option<Inserted> {
+        None
+    }
 
     /// Runs after the permit commits; reports a cut-short submission without retrying it.
     fn send(&mut self, keys: Self::Keys) -> anyhow::Result<Inserted>;
@@ -230,10 +236,14 @@ fn insert<N: NativeInsert>(
         Err(_) if !permit.active() => return Ok((Inserted::Cancelled, None)),
         Err(error) => return Err(error),
     };
-    let preflight = delivery.preflight(
-        !own_focus.held() && native.external_focus(),
-        native.shortcut_released(),
-    );
+    let focus = if own_focus.held() {
+        Focus::Own
+    } else {
+        native.focus()
+    };
+    let preflight = native
+        .refused(delivery)
+        .or_else(|| delivery.preflight(focus, native.shortcut_released()));
     // Checked after the preflight's native reads: its outcome leaves the dictation on the
     // clipboard, which a revoked recording must not.
     if !permit.active() {
@@ -281,7 +291,7 @@ fn submit<N: NativeInsert>(
 ) -> Inserted {
     if target.is_none()
         || own_focus.held()
-        || !native.external_focus()
+        || native.focus() != Focus::Elsewhere
         || native.target() != target
         || !native.shortcut_released()
     {

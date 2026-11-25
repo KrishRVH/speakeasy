@@ -59,11 +59,10 @@ use windows_sys::Win32::{
         HiDpi::{GetDpiForMonitor, GetDpiForWindow, MDT_EFFECTIVE_DPI},
         Input::KeyboardAndMouse::{VK_LBUTTON, VK_RBUTTON},
         WindowsAndMessaging::{
-            GA_ROOT, GWL_EXSTYLE, GetAncestor, GetClassNameW, GetCursorPos, GetSystemMetrics,
-            HWND_TOPMOST, IsIconic, IsWindow, IsWindowVisible, SM_SWAPBUTTON, SW_HIDE,
-            SW_SHOWNOACTIVATE, SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE,
-            SetWindowDisplayAffinity, SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE,
-            WS_EX_TRANSPARENT, WindowFromPoint,
+            GA_ROOT, GWL_EXSTYLE, GetAncestor, GetCursorPos, GetSystemMetrics, HWND_TOPMOST,
+            IsIconic, IsWindow, IsWindowVisible, SM_SWAPBUTTON, SW_HIDE, SW_SHOWNOACTIVATE,
+            SWP_FRAMECHANGED, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOSIZE, SetWindowDisplayAffinity,
+            SetWindowPos, ShowWindow, WDA_EXCLUDEFROMCAPTURE, WS_EX_TRANSPARENT, WindowFromPoint,
         },
     },
 };
@@ -73,7 +72,10 @@ use self::{
     exclusion::Exclusions,
     readback::{Readback, device_for},
 };
-use super::{BASE_DPI, is_key_down, is_own_window, ok_or_last_error};
+use super::{
+    BAR_CLASSES, BASE_DPI, DESKTOP_CLASSES, class_name, is_key_down, is_own_window,
+    ok_or_last_error,
+};
 use crate::{
     NativeWindow,
     movie::recording as movie,
@@ -100,10 +102,6 @@ const TICKS_PER_SECOND: i128 = 10_000_000;
 ///
 /// A frame's stamp can mark its presentation, up to a refresh after its composition began.
 const COMPOSITION_MARGIN: Duration = Duration::from_millis(50);
-
-const DESKTOP_CLASSES: [&str; 2] = ["Progman", "WorkerW"];
-
-const BAR_CLASSES: [&str; 2] = ["Shell_TrayWnd", "Shell_SecondaryTrayWnd"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct Display {
@@ -176,20 +174,6 @@ pub(crate) fn window_under_pointer(display: Display) -> anyhow::Result<Option<(W
 fn top_level_at(point: POINT) -> Option<HWND> {
     let window = unsafe { GetAncestor(WindowFromPoint(point), GA_ROOT) };
     (!window.is_null()).then_some(window)
-}
-
-fn class_name(window: HWND) -> String {
-    let mut class = [0_u16; 256];
-
-    let length = unsafe {
-        GetClassNameW(
-            window,
-            class.as_mut_ptr(),
-            i32::try_from(class.len()).unwrap_or_default(),
-        )
-    };
-    let length = usize::try_from(length).unwrap_or_default();
-    String::from_utf16_lossy(class.get(..length).unwrap_or_default())
 }
 
 fn window_part(display: Display, window: Window) -> Result<Option<Part>, WindowGone> {

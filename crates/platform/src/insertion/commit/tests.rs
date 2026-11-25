@@ -6,8 +6,8 @@ use super::{Continuation, NativeInsert, Worker, insert, settle};
 use crate::{
     InputSender, InsertPermit, PATIENCE,
     insertion::{
-        Delivery, Enter, FocusReport, INSERTION_STOPPED, Inserted, OwnFocus,
-        tests::{DELIVERIES, EXTERNAL_FOCUS, OWN_FOCUS, RELEASED},
+        Delivery, Enter, Focus, FocusReport, INSERTION_STOPPED, Inserted, OwnFocus,
+        tests::{DELIVERIES, RELEASED},
     },
 };
 
@@ -18,7 +18,7 @@ enum Step {
     Copy,
     PasteKeys,
     TextKeys,
-    ExternalFocus,
+    Focus,
     ShortcutReleased,
     Send(Keys),
     Restore,
@@ -38,13 +38,14 @@ struct Fake {
     snapshot: bool,
     changes_clipboard_at: Option<Step>,
     revokes_at: Option<(Step, InsertPermit)>,
-    external_focus: bool,
+    focus: Focus,
     releases: VecDeque<bool>,
     restored: Option<async_channel::Sender<u8>>,
     targets: VecDeque<u8>,
     activity: u8,
     texts: Vec<String>,
     return_fails: bool,
+    refuses: bool,
     fails: Vec<Step>,
 }
 
@@ -56,13 +57,14 @@ impl Fake {
             snapshot: true,
             changes_clipboard_at: None,
             revokes_at: None,
-            external_focus: EXTERNAL_FOCUS,
+            focus: Focus::Elsewhere,
             releases: VecDeque::new(),
             restored: None,
             targets: VecDeque::new(),
             activity: 0,
             texts: Vec::new(),
             return_fails: false,
+            refuses: false,
             fails: Vec::new(),
         }
     }
@@ -141,9 +143,9 @@ impl NativeInsert for Fake {
         Some(self.activity)
     }
 
-    fn external_focus(&mut self) -> bool {
-        self.reach(Step::ExternalFocus);
-        self.external_focus
+    fn focus(&mut self) -> Focus {
+        self.reach(Step::Focus);
+        self.focus
     }
 
     fn shortcut_released(&mut self) -> bool {
@@ -151,11 +153,17 @@ impl NativeInsert for Fake {
         self.releases.pop_front().unwrap_or(RELEASED)
     }
 
+    fn refused(&mut self, _: Delivery) -> Option<Inserted> {
+        self.refuses.then_some(REFUSED)
+    }
+
     fn send(&mut self, keys: Keys) -> anyhow::Result<Inserted> {
         self.reach(Step::Send(keys));
         Ok(Inserted::Sent)
     }
 }
+
+const REFUSED: Inserted = Inserted::Unavailable("Fixture refusal");
 
 fn unfocused() -> OwnFocus {
     FocusReport::default().subscribe()
@@ -179,7 +187,7 @@ fn paste_copies_then_checks_focus_and_sends_once() -> anyhow::Result<()> {
         [
             Step::PasteKeys,
             Step::Copy,
-            Step::ExternalFocus,
+            Step::Focus,
             Step::ShortcutReleased,
             Step::Send(Keys::Insert(Delivery::Paste)),
         ]
@@ -202,7 +210,7 @@ fn only_a_sent_paste_hands_back_the_clipboard_it_replaced() -> anyhow::Result<()
     assert_eq!((saved.contents, saved.mark), (0, WRITTEN));
 
     let mut native = Fake {
-        external_focus: OWN_FOCUS,
+        focus: Focus::Own,
         ..Fake::new()
     };
     let (_, kept) = insert(
@@ -226,6 +234,29 @@ fn only_a_sent_paste_hands_back_the_clipboard_it_replaced() -> anyhow::Result<()
         &unfocused(),
     )?;
     assert!(typed.is_none());
+    Ok(())
+}
+
+#[test]
+fn a_refused_delivery_sends_nothing_and_leaves_a_paste_on_the_clipboard() -> anyhow::Result<()> {
+    for delivery in DELIVERIES {
+        let mut native = Fake {
+            refuses: true,
+            ..Fake::new()
+        };
+        let (outcome, saved) = insert(&mut native, "text", &permit()?, delivery, &unfocused())?;
+        assert_eq!(outcome, REFUSED, "{delivery:?}");
+        assert!(!native.sent(), "{delivery:?}: a refused delivery was sent");
+        assert!(
+            saved.is_none(),
+            "{delivery:?}: unsent text would be replaced"
+        );
+        assert_eq!(
+            native.clipboard == WRITTEN,
+            delivery == Delivery::Paste,
+            "{delivery:?}: the dictation is not left to paste by hand"
+        );
+    }
     Ok(())
 }
 
@@ -270,7 +301,7 @@ fn direct_input_never_touches_the_clipboard() -> anyhow::Result<()> {
         native.steps,
         [
             Step::TextKeys,
-            Step::ExternalFocus,
+            Step::Focus,
             Step::ShortcutReleased,
             Step::Send(Keys::Insert(Delivery::Direct)),
         ]
@@ -347,7 +378,7 @@ fn a_failed_copy_sends_nothing() -> anyhow::Result<()> {
 fn own_focus_leaves_the_text_copied_without_spending_authority() -> anyhow::Result<()> {
     let permit = permit()?;
     let mut native = Fake {
-        external_focus: OWN_FOCUS,
+        focus: Focus::Own,
         ..Fake::new()
     };
     assert!(matches!(
@@ -368,7 +399,7 @@ fn a_focused_speakeasy_window_never_receives_input() -> anyhow::Result<()> {
         let mut native = Fake::new();
         assert_eq!(
             Some(insert(&mut native, "text", &permit, delivery, &report.subscribe())?.0),
-            delivery.check_focus(OWN_FOCUS),
+            delivery.check_focus(Focus::Own),
             "{delivery:?} input ignored Speakeasy's own focus"
         );
         assert!(!native.sent(), "{delivery:?} input reached Speakeasy");

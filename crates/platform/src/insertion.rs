@@ -163,27 +163,45 @@ pub enum Delivery {
     Direct,
 }
 
+/// What holds the keyboard focus a delivery would land in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Focus {
+    /// Another app's window.
+    Elsewhere,
+    /// One of Speakeasy's own windows.
+    Own,
+    /// Nothing that takes text: no window, or the Windows desktop or taskbar.
+    #[cfg_attr(
+        all(target_os = "linux", not(test)),
+        expect(
+            dead_code,
+            reason = "Linux desktops only tell whether Speakeasy's own window is focused"
+        )
+    )]
+    Nowhere,
+}
+
 impl Delivery {
-    pub(crate) fn check_focus(self, external_focus: bool) -> Option<Inserted> {
-        if external_focus {
-            return None;
-        }
-        Some(match self {
-            Self::Paste => {
+    pub(crate) fn check_focus(self, focus: Focus) -> Option<Inserted> {
+        Some(match (focus, self) {
+            (Focus::Elsewhere, _) => return None,
+            (Focus::Own, Self::Paste) => {
                 Inserted::Copied("Text copied. Focus an editor outside Speakeasy and paste.")
             },
-            Self::Direct => {
+            (Focus::Own, Self::Direct) => {
                 Inserted::Unavailable("Focus an editor outside Speakeasy. Clipboard preserved.")
+            },
+            (Focus::Nowhere, Self::Paste) => {
+                Inserted::Copied("Text copied. Click into a text field and paste.")
+            },
+            (Focus::Nowhere, Self::Direct) => {
+                Inserted::Unavailable("Click into a text field. Clipboard preserved.")
             },
         })
     }
 
-    pub(crate) fn preflight(
-        self,
-        external_focus: bool,
-        shortcut_released: bool,
-    ) -> Option<Inserted> {
-        self.check_focus(external_focus)
+    pub(crate) fn preflight(self, focus: Focus, shortcut_released: bool) -> Option<Inserted> {
+        self.check_focus(focus)
             .or_else(|| self.check_shortcut(shortcut_released))
     }
 

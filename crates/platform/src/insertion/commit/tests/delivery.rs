@@ -19,7 +19,7 @@ fn delivery_waits_on_its_native_shortcut_and_rechecks_it_before_sending() -> any
         let request = request(delivery)?;
         assert_eq!(
             deliver(&mut native, &request, &mut Continuation::default())?.0,
-            delivery.preflight(EXTERNAL_FOCUS, HELD).unwrap()
+            delivery.preflight(Focus::Elsewhere, HELD).unwrap()
         );
         assert!(!native.sent());
     }
@@ -52,7 +52,7 @@ fn a_submitted_insertion_presses_return_only_after_its_text_lands() -> anyhow::R
         );
 
         let mut blocked = Fake::new();
-        blocked.external_focus = !EXTERNAL_FOCUS;
+        blocked.focus = Focus::Own;
         let refused = deliver(&mut blocked, &request, &mut Continuation::default())?.0;
         assert_ne!(refused, Inserted::Sent);
         assert!(!blocked.steps.contains(&Step::Send(Keys::Return)));
@@ -170,7 +170,7 @@ fn typing_pointing_or_another_window_ends_the_trail() -> anyhow::Result<()> {
 #[test]
 fn only_text_left_in_place_starts_a_trail() -> anyhow::Result<()> {
     assert_eq!(
-        second_after(|native, _| native.external_focus = OWN_FOCUS, |_| {})?,
+        second_after(|native, _| native.focus = Focus::Own, |_| {})?,
         "Second",
         "Left to paste by hand"
     );
@@ -215,7 +215,7 @@ fn second_after(
     let mut first = said("First.", Delivery::Paste)?;
     shape_first(&mut native, &mut first);
     deliver(&mut native, &first, &mut continuation)?;
-    native.external_focus = EXTERNAL_FOCUS;
+    native.focus = Focus::Elsewhere;
     between(&mut native);
     deliver(
         &mut native,
