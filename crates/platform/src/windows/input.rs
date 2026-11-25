@@ -27,16 +27,18 @@ use windows_sys::{
             },
         },
         UI::{
+            Accessibility::{HWINEVENTHOOK, SetWinEventHook, UnhookWinEvent},
             Input::KeyboardAndMouse::VIRTUAL_KEY,
             WindowsAndMessaging::{
                 CallNextHookEx, CreateWindowExW, DefWindowProcW, DestroyWindow, DispatchMessageW,
-                HHOOK, KBDLLHOOKSTRUCT, MSG, MWMO_INPUTAVAILABLE, MsgWaitForMultipleObjectsEx,
-                PBT_APMSUSPEND, PM_NOREMOVE, PM_REMOVE, PeekMessageW, PostThreadMessageW,
-                QS_ALLINPUT, RegisterClassW, SetWindowsHookExW, TranslateMessage,
-                UnhookWindowsHookEx, WH_KEYBOARD_LL, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST,
-                WM_QUERYENDSESSION, WM_QUIT, WM_SYSKEYDOWN, WM_WTSSESSION_CHANGE, WNDCLASSW,
-                WS_EX_NOACTIVATE, WS_EX_TOOLWINDOW, WS_POPUP, WTS_CONSOLE_DISCONNECT,
-                WTS_REMOTE_DISCONNECT, WTS_SESSION_LOCK, WTS_SESSION_LOGOFF,
+                EVENT_SYSTEM_FOREGROUND, HHOOK, KBDLLHOOKSTRUCT, MSG, MWMO_INPUTAVAILABLE,
+                MsgWaitForMultipleObjectsEx, PBT_APMSUSPEND, PM_NOREMOVE, PM_REMOVE, PeekMessageW,
+                PostThreadMessageW, QS_ALLINPUT, RegisterClassW, SetWindowsHookExW,
+                TranslateMessage, UnhookWindowsHookEx, WH_KEYBOARD_LL, WINEVENT_OUTOFCONTEXT,
+                WINEVENT_SKIPOWNPROCESS, WM_APP, WM_KEYDOWN, WM_POWERBROADCAST, WM_QUERYENDSESSION,
+                WM_QUIT, WM_SYSKEYDOWN, WM_WTSSESSION_CHANGE, WNDCLASSW, WS_EX_NOACTIVATE,
+                WS_EX_TOOLWINDOW, WS_POPUP, WTS_CONSOLE_DISCONNECT, WTS_REMOTE_DISCONNECT,
+                WTS_SESSION_LOCK, WTS_SESSION_LOGOFF,
             },
         },
     },
@@ -51,6 +53,9 @@ use crate::{
 
 /// Posted by the hook so the message loop, not the time-limited hook callback, masks Start.
 const MASK_START: u32 = WM_APP + 1;
+
+/// Posted by the foreground watch so the message loop, which owns the hook, installs it again.
+const REINSTALL: u32 = WM_APP + 2;
 
 /// A virtual key Windows leaves unassigned.
 const UNASSIGNED_KEY: VIRTUAL_KEY = 0xE8;
@@ -168,6 +173,51 @@ impl HookState {
     }
 }
 
+/// The keyboard hook, installed again whenever another app's window takes the foreground.
+///
+/// While an app that reads raw keyboard input and hooks the keyboard itself holds the foreground,
+/// as Tauri 2 apps do, Windows stops calling every low-level keyboard hook until one is installed
+/// again. A fresh install also puts ours ahead of hooks installed after it, such as a remapper's.
+struct Hook {
+    installed: KeyboardHook,
+    /// One more install after a foreground change: an app can show its window first and hook the
+    /// keyboard only then.
+    again: Option<Instant>,
+    _foreground: Option<ForegroundWatch>,
+}
+
+impl Hook {
+    const AGAIN_AFTER: Duration = Duration::from_millis(1_500);
+
+    fn install() -> io::Result<Self> {
+        Ok(Self {
+            installed: KeyboardHook::install()?,
+            again: None,
+            _foreground: ForegroundWatch::start(),
+        })
+    }
+
+    fn foreground_changed(&mut self, now: Instant) {
+        self.reinstall();
+        self.again = now.checked_add(Self::AGAIN_AFTER);
+    }
+
+    fn reinstall_when_due(&mut self, now: Instant) {
+        if self.again.is_some_and(|at| now >= at) {
+            self.again = None;
+            self.reinstall();
+        }
+    }
+
+    /// The fresh hook goes in before the old one leaves, with no message pumped in between, so
+    /// each key edge reaches exactly one of them. A failed install keeps the hook in place.
+    fn reinstall(&mut self) {
+        if let Ok(fresh) = KeyboardHook::install() {
+            self.installed = fresh;
+        }
+    }
+}
+
 struct KeyboardHook(HHOOK);
 
 impl KeyboardHook {
@@ -191,6 +241,37 @@ impl Drop for KeyboardHook {
     fn drop(&mut self) {
         unsafe {
             UnhookWindowsHookEx(self.0);
+        }
+    }
+}
+
+/// Out-of-context foreground events, delivered on the installing thread while it pumps messages.
+///
+/// Our own windows are skipped: they need no reinstall, and Settings takes the foreground often.
+struct ForegroundWatch(HWINEVENTHOOK);
+
+impl ForegroundWatch {
+    /// The hook works without the watch until an app silences it, so a refusal is no error.
+    fn start() -> Option<Self> {
+        let watch = unsafe {
+            SetWinEventHook(
+                EVENT_SYSTEM_FOREGROUND,
+                EVENT_SYSTEM_FOREGROUND,
+                null_mut(),
+                Some(foreground_changed),
+                0,
+                0,
+                WINEVENT_OUTOFCONTEXT | WINEVENT_SKIPOWNPROCESS,
+            )
+        };
+        (!watch.is_null()).then_some(Self(watch))
+    }
+}
+
+impl Drop for ForegroundWatch {
+    fn drop(&mut self) {
+        unsafe {
+            UnhookWinEvent(self.0);
         }
     }
 }
@@ -323,16 +404,25 @@ impl Registration {
         };
     }
 
-    fn timeout(self, now: Instant) -> u32 {
+    const fn next_attempt(self) -> Option<Instant> {
         match self {
-            Self::Pending { at, .. } => {
-                let remaining = at.saturating_duration_since(now);
-                // Round up so a sub-millisecond wait cannot become a zero timeout that spins.
-                u32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE)
-            },
-            Self::Registered | Self::Abandoned => INFINITE,
+            Self::Pending { at, .. } => Some(at),
+            Self::Registered | Self::Abandoned => None,
         }
     }
+}
+
+/// The wait in milliseconds until the earliest deadline, or forever without one.
+fn wait_until(deadlines: impl IntoIterator<Item = Option<Instant>>, now: Instant) -> u32 {
+    deadlines
+        .into_iter()
+        .flatten()
+        .min()
+        .map_or(INFINITE, |at| {
+            let remaining = at.saturating_duration_since(now);
+            // Round up so a sub-millisecond wait cannot become a zero timeout that spins.
+            u32::try_from(remaining.as_nanos().div_ceil(1_000_000)).unwrap_or(INFINITE)
+        })
 }
 
 fn monitor(input: &InputSender, stop: &StopEvent, state: HookState) {
@@ -368,7 +458,7 @@ fn run_event_loop(
         SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL);
     }
     create_message_queue();
-    let _hook = KeyboardHook::install()?;
+    let mut hook = Hook::install()?;
     let window = LifecycleWindow::create()?;
     let mut notifications = SessionNotifications::register(&window, Instant::now());
 
@@ -380,7 +470,7 @@ fn run_event_loop(
         cancel: CANCEL_SHORTCUT.into(),
         globe_shortcut: false,
     });
-    pump_messages(stop, &mut notifications)
+    pump_messages(stop, &mut notifications, &mut hook)
 }
 
 /// Makes Windows create this thread's queue before the hook posts `MASK_START` to it.
@@ -392,11 +482,17 @@ fn create_message_queue() {
     }
 }
 
-fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>) -> io::Result<()> {
+fn pump_messages(
+    stop: &StopEvent,
+    notifications: &mut SessionNotifications<'_>,
+    hook: &mut Hook,
+) -> io::Result<()> {
     let handles = [stop.0.as_raw_handle()];
-    while dispatch_queued_messages(stop).is_continue() && !stop.is_set() {
-        notifications.attempt_when_due(Instant::now());
-        let timeout = notifications.registration.timeout(Instant::now());
+    while dispatch_queued_messages(stop, hook).is_continue() && !stop.is_set() {
+        let now = Instant::now();
+        notifications.attempt_when_due(now);
+        hook.reinstall_when_due(now);
+        let timeout = wait_until([notifications.registration.next_attempt(), hook.again], now);
 
         let woken = unsafe {
             MsgWaitForMultipleObjectsEx(
@@ -416,20 +512,20 @@ fn pump_messages(stop: &StopEvent, notifications: &mut SessionNotifications<'_>)
     Ok(())
 }
 
-fn dispatch_queued_messages(stop: &StopEvent) -> ControlFlow<()> {
+fn dispatch_queued_messages(stop: &StopEvent, hook: &mut Hook) -> ControlFlow<()> {
     let mut message = MSG::default();
 
     while unsafe { PeekMessageW(&raw mut message, null_mut(), 0, 0, PM_REMOVE) } != FALSE {
         if stop.is_set() || message.message == WM_QUIT {
             return ControlFlow::Break(());
         }
-        if message.message == MASK_START {
-            mask_start_menu();
-        } else {
-            unsafe {
+        match message.message {
+            MASK_START => mask_start_menu(),
+            REINSTALL => hook.foreground_changed(Instant::now()),
+            _ => unsafe {
                 TranslateMessage(&raw const message);
                 DispatchMessageW(&raw const message);
-            }
+            },
         }
     }
     ControlFlow::Continue(())
@@ -478,6 +574,20 @@ unsafe extern "system" fn lifecycle_window(
     }
 
     unsafe { DefWindowProcW(hwnd, message, wparam, lparam) }
+}
+
+unsafe extern "system" fn foreground_changed(
+    _: HWINEVENTHOOK,
+    _: u32,
+    _: HWND,
+    _: i32,
+    _: i32,
+    _: u32,
+    _: u32,
+) {
+    unsafe {
+        PostThreadMessageW(GetCurrentThreadId(), REINSTALL, 0, 0);
+    }
 }
 
 /// Handles a panic caught in a native callback, which must not unwind into Windows.
@@ -545,7 +655,11 @@ mod tests {
     fn a_failed_registration_sleeps_until_its_retry_is_due() {
         let start = Instant::now();
         let mut registration = failed_once(start);
-        assert_eq!(registration.timeout(start), 5_000, "A failed attempt spins");
+        assert_eq!(
+            wait_until([registration.next_attempt()], start),
+            5_000,
+            "A failed attempt spins"
+        );
         registration.attempt_when_due(start, || panic!("Retried before it was due"));
     }
 
@@ -560,7 +674,7 @@ mod tests {
         }
         assert_eq!(registration, Registration::Abandoned);
         assert_eq!(
-            registration.timeout(now),
+            wait_until([registration.next_attempt()], now),
             INFINITE,
             "Abandoned retries wake"
         );
@@ -572,7 +686,23 @@ mod tests {
         let mut registration = failed_once(start);
         registration.attempt_when_due(start + Registration::RETRY_AFTER, || true);
         assert_eq!(registration, Registration::Registered);
-        assert_eq!(registration.timeout(start), INFINITE);
+        assert_eq!(wait_until([registration.next_attempt()], start), INFINITE);
+    }
+
+    #[test]
+    fn a_pending_reinstall_wakes_the_loop_while_registration_sleeps() {
+        let start = Instant::now();
+        let again = start.checked_add(Hook::AGAIN_AFTER);
+        assert_eq!(
+            wait_until([Registration::Registered.next_attempt(), again], start),
+            1_500,
+            "The second install after a foreground change never runs"
+        );
+        assert_eq!(
+            wait_until([failed_once(start).next_attempt(), again], start),
+            1_500,
+            "The earlier deadline waits behind the later one"
+        );
     }
 
     #[test]
