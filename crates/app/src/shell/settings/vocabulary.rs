@@ -1,5 +1,6 @@
 use gpui::{
-    App, AppContext as _, Context, Div, Entity, Focusable as _, Window, div, prelude::*, px, rgb,
+    AnyElement, App, AppContext as _, Context, Div, Entity, Focusable as _, Svg, Window, div,
+    prelude::*, px, rgb,
 };
 
 use super::{
@@ -11,7 +12,7 @@ use crate::{
     controls::{Weight, icon},
     icons,
     shell::Services,
-    theme::Theme,
+    theme::{Palette, Theme},
     transcript::vocabulary::{self, Correction},
 };
 
@@ -331,92 +332,37 @@ impl Settings {
     }
 
     pub(super) fn practice_correction(&self, ui: &Ui<'_>) -> Option<Div> {
-        let heard = self.practiced_phrase()?;
-        let kit = ui.kit();
-        let palette = ui.palette;
-        let written = &self.vocabulary.practiced;
-        Some(
-            div()
-                .flex()
-                .items_end()
-                .gap(px(10.0))
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.0))
-                        .child(kit.detail("When I say"))
-                        .child(
-                            div()
-                                .h(px(32.0))
-                                .flex()
-                                .items_center()
-                                .text_color(rgb(palette.ink))
-                                .child(heard),
-                        ),
-                )
-                .child(
-                    div()
-                        .h(px(32.0))
-                        .flex()
-                        .items_center()
-                        .child(icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none()),
-                )
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w(px(0.0))
-                        .flex()
-                        .flex_col()
-                        .gap(px(6.0))
-                        .child(kit.detail("Write"))
-                        .child(written.clone()),
-                )
-                .child(ui.button_if(
-                    "Add",
-                    Action::Correction(Edit::AddFromPractice),
-                    Weight::Primary,
-                    !written.read(ui.cx).text().trim().is_empty(),
-                )),
-        )
-    }
-
-    fn correction_row(&self, ui: &Ui<'_>) -> Div {
-        let kit = ui.kit();
-        let palette = ui.palette;
-        let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();
-        let labeled = |label: &'static str, field: &Entity<TextField>| {
-            div()
-                .flex_1()
-                .min_w(px(0.0))
-                .flex()
-                .flex_col()
-                .gap(px(6.0))
-                .child(kit.detail(label))
-                .child(field.clone())
-        };
-        div()
+        let heard = div()
+            .h(px(32.0))
             .flex()
-            .items_end()
-            .gap(px(10.0))
-            .child(labeled("When I say", &self.vocabulary.addition.heard))
-            .child(div().h(px(32.0)).flex().items_center().child(arrow()))
-            .child(labeled("Write", &self.vocabulary.addition.written))
-            .child(ui.button_if(
-                "Add",
-                Action::Correction(Edit::Add),
-                Weight::Secondary,
-                self.vocabulary.addition.is_complete(ui.cx),
-            ))
+            .items_center()
+            .text_color(rgb(ui.palette.ink))
+            .child(self.practiced_phrase()?);
+        let written = &self.vocabulary.practiced;
+        let add = ui.button_if(
+            "Add",
+            Action::Correction(Edit::AddFromPractice),
+            Weight::Primary,
+            !written.read(ui.cx).text().trim().is_empty(),
+        );
+        Some(entry(ui, heard, written, add))
     }
 
     pub(super) fn vocabulary_section(&self, ui: &Ui<'_>) -> Div {
         let kit = ui.kit();
         let palette = ui.palette;
-        let arrow = || icon(icons::ARROW_RIGHT, 14.0, palette.muted).flex_none();
-        let mut rows = vec![self.correction_row(ui).p(px(16.0)).into_any_element()];
+        let addition = &self.vocabulary.addition;
+        let add = ui.button_if(
+            "Add",
+            Action::Correction(Edit::Add),
+            Weight::Secondary,
+            addition.is_complete(ui.cx),
+        );
+        let mut rows = vec![
+            entry(ui, addition.heard.clone(), &addition.written, add)
+                .p(px(16.0))
+                .into_any_element(),
+        ];
         if self.config.vocabulary.is_empty() {
             rows.push(
                 kit.detail(
@@ -446,7 +392,7 @@ impl Settings {
                                     .min_w(px(0.0))
                                     .child(self.vocabulary.revision.heard.clone()),
                             )
-                            .child(arrow())
+                            .child(arrow(palette))
                             .child(
                                 div()
                                     .flex_1()
@@ -488,7 +434,7 @@ impl Settings {
                                         .text_color(rgb(palette.muted))
                                         .child(rule.heard.clone()),
                                 )
-                                .child(arrow())
+                                .child(arrow(palette))
                                 .child(rule.written.clone()),
                         )
                         .child(
@@ -522,16 +468,49 @@ impl Settings {
             )
             .child(kit.group(rows))
             .when_some(self.vocabulary.removed.as_ref(), |section, (_, rule)| {
-                section.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.0))
-                        .child(ui.text(format!("Removed “{}”.", rule.heard)))
-                        .child(ui.button("Undo", Action::Correction(Edit::Undo), Weight::Quiet)),
-                )
+                section.child(ui.undo(
+                    format!("Removed “{}”.", rule.heard),
+                    Action::Correction(Edit::Undo),
+                ))
             })
     }
+}
+
+/// What the user says, an arrow, what Speakeasy writes instead, and the button that adds the pair.
+fn entry(
+    ui: &Ui<'_>,
+    heard: impl IntoElement,
+    written: &Entity<TextField>,
+    add: impl IntoElement,
+) -> Div {
+    let labeled = |label: &'static str, field: AnyElement| {
+        div()
+            .flex_1()
+            .min_w(px(0.0))
+            .flex()
+            .flex_col()
+            .gap(px(6.0))
+            .child(ui.kit().detail(label))
+            .child(field)
+    };
+    div()
+        .flex()
+        .items_end()
+        .gap(px(10.0))
+        .child(labeled("When I say", heard.into_any_element()))
+        .child(
+            div()
+                .h(px(32.0))
+                .flex()
+                .items_center()
+                .child(arrow(ui.palette)),
+        )
+        .child(labeled("Write", written.clone().into_any_element()))
+        .child(add)
+}
+
+fn arrow(palette: &Palette) -> Svg {
+    icon(icons::ARROW_RIGHT, 14.0, palette.muted)
 }
 
 #[cfg(test)]

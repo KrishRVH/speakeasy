@@ -149,6 +149,16 @@ impl Ui<'_> {
     pub(super) fn text(&self, text: impl Into<SharedString>) -> Div {
         self.kit().detail(text).px(px(2.0))
     }
+
+    /// Names what an edit just removed, beside the button that restores it.
+    pub(super) fn undo(&self, removed: String, action: Action) -> Div {
+        div()
+            .flex()
+            .items_center()
+            .gap(px(10.0))
+            .child(self.text(removed))
+            .child(self.button("Undo", action, Weight::Quiet))
+    }
 }
 
 impl Settings {

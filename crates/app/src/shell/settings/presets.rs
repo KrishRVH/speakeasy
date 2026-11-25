@@ -401,14 +401,10 @@ impl Settings {
             )
             .child(kit.group(rows))
             .when_some(self.presets.deleted.as_ref(), |section, (_, preset)| {
-                section.child(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap(px(10.0))
-                        .child(ui.text(format!("Deleted “{}”.", preset.name())))
-                        .child(ui.button("Undo", Action::Preset(Edit::Undo), Weight::Quiet)),
-                )
+                section.child(ui.undo(
+                    format!("Deleted “{}”.", preset.name()),
+                    Action::Preset(Edit::Undo),
+                ))
             })
             .when(full, |section| {
                 section.child(ui.text(format!(
