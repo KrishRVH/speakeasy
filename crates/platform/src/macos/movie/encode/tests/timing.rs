@@ -23,7 +23,7 @@ impl Observer for Geometry {
 
 pub(super) fn verify(directory: &Path) -> anyhow::Result<()> {
     let path = directory.join("timing.mp4");
-    let mut encoder = Encoder::<Codec>::open(&path, Canvas::new([320, 240])?, 384 << 20)?;
+    let mut encoder = Encoder::<Codec>::open(&path, Canvas::new([320, 240])?, FILE_LIMIT)?;
     let mut geometry = Geometry::default();
     let patterns = [0, 1].map(|index| crate::movie::tests::color_frame(index, [320, 240]));
     for (at, index) in [(0, 0), (40, 1), (67, 0)] {

@@ -5,7 +5,7 @@ use std::fs::File;
 use speakeasy_show::MoviePrefix;
 
 use super::*;
-use crate::movie::encode::Codec as _;
+use crate::movie::{encode::Codec as _, recording::FILE_LIMIT};
 
 #[test]
 #[ignore = "Opt in: native file-fed encoder and decoder; synthetic pixels only"]
@@ -23,7 +23,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         ("large", 90, [2560, 1440], Picture::Moving, Pace::RealTime),
     ] {
         let path = directory.join(format!("{name}.mp4"));
-        let mut encoder = Codec::open(&path, size, 384 << 20)?;
+        let mut encoder = Codec::open(&path, size, FILE_LIMIT)?;
         let patterns = [0, 1].map(|index| crate::movie::tests::color_frame(index, size));
         let started = Instant::now();
         for index in 0..count {
@@ -66,7 +66,7 @@ fn native_mac_movie_encoding() -> anyhow::Result<()> {
         }
     }
     let path = directory.join("cancelled.mp4");
-    let mut encoder = Codec::open(&path, [320, 240], 384 << 20)?;
+    let mut encoder = Codec::open(&path, [320, 240], FILE_LIMIT)?;
     let image = crate::movie::tests::color_frame(0, [320, 240]).image;
     for index in 0..90 {
         assert!(

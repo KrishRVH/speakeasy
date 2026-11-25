@@ -19,6 +19,7 @@ use crate::{
     movie::{
         canvas,
         encode::{Encoder as Timeline, End},
+        recording::FILE_LIMIT,
         tests::frame,
     },
 };
@@ -28,7 +29,6 @@ mod geometry;
 mod timing;
 
 type Encoder = Timeline<encoder::Codec>;
-const FILE_LIMIT: u64 = 384 << 20;
 
 #[test]
 #[ignore = "Opt in: native Media Foundation encoder, synthetic pixels only; set SPEAKEASY_MOVIE_PROBE_DIRECTORY to an empty artifact directory"]

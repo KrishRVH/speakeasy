@@ -28,7 +28,7 @@ pub(crate) const INTERVAL: Duration = Duration::from_nanos(33_333_334);
 /// Caps the native encoder's disk use, independently of the retained still frames.
 ///
 /// Stays below `MoviePrefix::FILE_LIMIT`, which readers enforce.
-const FILE_LIMIT: u64 = 384 << 20;
+pub(crate) const FILE_LIMIT: u64 = 384 << 20;
 
 pub(crate) enum Movie<C: Codec> {
     Pending(MovieTarget),
