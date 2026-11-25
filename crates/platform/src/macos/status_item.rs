@@ -43,7 +43,7 @@ impl StatusItem {
     pub fn set_template_image(&self, rgba: &[u8], side: u32) -> anyhow::Result<()> {
         let png = encode_png(side, side, rgba).context("Can't encode the menu bar image")?;
         let image = NSImage::initWithData(NSImage::alloc(), &NSData::from_vec(png))
-            .context("AppKit could not read the menu bar image")?;
+            .context("AppKit couldn't read the menu bar image")?;
         let points = f64::from(side).min(MENU_BAR_POINTS);
         image.setSize(NSSize::new(points, points));
         image.setTemplate(true);

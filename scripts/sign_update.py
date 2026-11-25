@@ -17,7 +17,7 @@ def openssl(arguments: list[str]) -> bytes:
     result = subprocess.run(["openssl", *arguments], capture_output=True, check=False)
     if result.returncode:
         raise ValueError(
-            "OpenSSL could not authenticate the update signing key or sign the manifest."
+            "OpenSSL couldn't authenticate the update signing key or sign the manifest."
         )
     return result.stdout
 

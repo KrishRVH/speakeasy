@@ -17,7 +17,7 @@ work=$(mktemp -d)
 mounted=
 cleanup() {
   if [[ -n "$mounted" ]]; then
-    hdiutil detach -quiet "$mounted" || echo "Could not detach $mounted" >&2
+    hdiutil detach -quiet "$mounted" || echo "Couldn't detach $mounted" >&2
   fi
   rm -rf -- "$work"
 }

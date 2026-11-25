@@ -70,7 +70,7 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
         assert!(!interrupted.directory().exists());
         assert!(
             fs::read_to_string(show.directory().join(speakeasy_show::Bundle::SUMMARY))?
-                .contains("Video could not be saved")
+                .contains("Video couldn't be saved")
         );
     }
     Ok(())

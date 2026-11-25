@@ -41,7 +41,7 @@ impl Exported {
             voice::Status::Absent => "silent (this Show has no saved audio)",
         };
         let annotations = if self.frames_without_annotations > 0 || self.omitted_annotations > 0 {
-            " Some annotations could not be placed; see the saved Show for full context."
+            " Some annotations couldn't be placed; see the saved Show for full context."
         } else {
             ""
         };

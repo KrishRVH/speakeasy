@@ -47,9 +47,9 @@ impl fmt::Display for Error {
                 "a {width}×{height} image is empty, too large, or mismatched"
             ),
             Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
-            Kind::Manifest(_) => f.write_str("the manifest could not be encoded"),
-            Kind::Png(_) => f.write_str("the PNG could not be encoded"),
-            Kind::Typeface => f.write_str("the badge typeface could not be read"),
+            Kind::Manifest(_) => f.write_str("the manifest couldn't be encoded"),
+            Kind::Png(_) => f.write_str("the PNG couldn't be encoded"),
+            Kind::Typeface => f.write_str("the badge typeface couldn't be read"),
             Kind::Invalid(reason) => f.write_str(reason),
         }
     }

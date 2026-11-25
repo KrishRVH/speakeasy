@@ -13,7 +13,7 @@ use super::{
 };
 use crate::runtime::ports::{Footage, PUBLISH_STOPPED, Preservation, Published, Sealed};
 
-const UNHEARD: &str = "Narration could not be transcribed. The saved Show is unchanged; its audio \
+const UNHEARD: &str = "Narration couldn't be transcribed. The saved Show is unchanged; its audio \
                        stays in Shows until it expires.";
 
 pub(crate) struct Publication {
@@ -80,7 +80,7 @@ pub(crate) async fn publish(
         Err(_) if !permit.active() => return Ok(Published::Cancelled),
         Err(error) => {
             return Err(error.context(
-                "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage.",
+                "The Show couldn't be saved because its checkpoint failed. Check Shows for recoverable footage.",
             ));
         },
     };
@@ -139,7 +139,7 @@ fn publish_with(
         Ok(Some(persisted)) => persisted,
         Ok(None) => return Ok(Published::Cancelled),
         Err(error) if checkpoint.is_some() => {
-            return Err(error.context("The Show could not be saved. Recover it from Shows."));
+            return Err(error.context("The Show couldn't be saved. Recover it from Shows."));
         },
         Err(error) => return Err(error),
     };

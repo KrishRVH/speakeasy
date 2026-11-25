@@ -130,7 +130,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $frame = New-Object DemoWindows+Rect
     $origin = New-Object Drawing.Point 0, 0
     if (![DemoWindows]::GetWindowRect($Window, [ref]$frame) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
-        throw 'Could not read owned window geometry'
+        throw "Couldn't read owned window geometry"
     }
     $fieldBefore = $heard.Current.BoundingRectangle
     $originBefore = $origin
@@ -138,7 +138,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     Start-Sleep -Milliseconds 200
     $origin = New-Object Drawing.Point 0, 0
     if (![DemoWindows]::GetWindowRect($Window, [ref]$frame) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
-        throw 'Could not read owned window geometry'
+        throw "Couldn't read owned window geometry"
     }
     if ($origin.X -eq $originBefore.X -and $origin.Y -eq $originBefore.Y) { throw 'Owned window did not move' }
     $bounds = $root.Current.BoundingRectangle

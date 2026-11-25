@@ -16,7 +16,7 @@ pub(crate) fn delete(parent: &Path, directory: &Path) -> anyhow::Result<()> {
         "This Show is already gone. Refresh Shows."
     );
     fs::remove_dir_all(directory).context(
-        "Some of this Show's files could not be deleted. Close open Show files, refresh, and \
+        "Some of this Show's files couldn't be deleted. Close open Show files, refresh, and \
          delete it again",
     )
 }

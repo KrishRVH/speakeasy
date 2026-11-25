@@ -268,7 +268,7 @@ impl fmt::Display for Summary<'_> {
             )?,
             Some(NarrationLoss::NotTranscribed) => writeln!(
                 f,
-                "The user's speech could not be transcribed; what the user said is missing."
+                "The user's speech couldn't be transcribed; what the user said is missing."
             )?,
             None => {},
         }

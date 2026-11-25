@@ -35,7 +35,7 @@ impl AnnotationState {
             Self::Off => "Original video · annotations off".into(),
             Self::Painted { omitted: 0, .. } => "Annotations on".into(),
             Self::Painted { omitted, .. } => {
-                format!("Annotations on · {omitted} could not be placed on this frame")
+                format!("Annotations on · {omitted} couldn't be placed on this frame")
             },
             Self::Unavailable => {
                 "Annotations unavailable for this frame · showing original video".into()

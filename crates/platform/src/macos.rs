@@ -949,7 +949,7 @@ pub(super) fn attach_stdio() -> bool {
 pub(super) fn show_startup_error(message: &str) {
     if let Some(main) = MainThreadMarker::new() {
         let alert = NSAlert::new(main);
-        alert.setMessageText(ns_string!("Speakeasy could not start"));
+        alert.setMessageText(ns_string!("Speakeasy couldn't start"));
         alert.setInformativeText(&NSString::from_str(message));
         alert.runModal();
     }

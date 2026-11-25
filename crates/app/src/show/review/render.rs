@@ -785,11 +785,12 @@ impl Review {
                     "The microphone sent only silence. Narration is missing."
                 },
                 NarrationLoss::NotTranscribed => {
-                    "Speech could not be transcribed. Narration is missing."
+                    "Speech couldn't be transcribed. Narration is missing."
                 },
             }),
-            Some(Narration::Unavailable) => div()
-                .child("Recorded narration is unavailable because show.json could not be read."),
+            Some(Narration::Unavailable) => {
+                div().child("Recorded narration is unavailable because show.json couldn't be read.")
+            },
             None => div()
                 .text_color(rgb(palette.muted))
                 .child(if self.opening.is_some() {

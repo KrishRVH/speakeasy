@@ -26,7 +26,7 @@ const NO_FRAMES: &str = "No complete frame survived. Discard this interrupted Sh
 const BUSY: &str = "This Show is already recording, recovering, or being discarded. Refresh Shows.";
 const UNMATCHED: &str =
     "No interrupted Show matches that ID or path. Run speakeasy show list --json.";
-const VIDEO_LOST: &str = "\n\nVideo could not be saved. The saved keyframes and narration remain \
+const VIDEO_LOST: &str = "\n\nVideo couldn't be saved. The saved keyframes and narration remain \
                           available.\n";
 
 pub(crate) struct Checkpoint {

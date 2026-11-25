@@ -171,7 +171,7 @@ fn decoded(
 
 fn undecodable(error: Option<&NSError>) -> anyhow::Error {
     let Some(error) = error else {
-        return anyhow!("macOS could not decode this video");
+        return anyhow!("macOS couldn't decode this video");
     };
     let code = error.code();
     let key = unsafe { NSUnderlyingErrorKey };
@@ -181,8 +181,8 @@ fn undecodable(error: Option<&NSError>) -> anyhow::Error {
         .and_then(|object| object.downcast_ref::<NSError>())
         .map(NSError::code)
     {
-        Some(detail) => anyhow!("macOS could not decode this video ({code}, {detail})"),
-        None => anyhow!("macOS could not decode this video ({code})"),
+        Some(detail) => anyhow!("macOS couldn't decode this video ({code}, {detail})"),
+        None => anyhow!("macOS couldn't decode this video ({code})"),
     }
 }
 

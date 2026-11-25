@@ -109,7 +109,7 @@ begin
     end;
   end;
   if not Result then
-    SuppressibleMsgBox('Speakeasy has not finished closing, or Windows could not confirm it. Nothing was installed. Reopen Speakeasy and try the update again.', mbError, MB_OK, IDOK);
+    SuppressibleMsgBox('Speakeasy has not finished closing, or Windows couldn''t confirm it. Nothing was installed. Reopen Speakeasy and try the update again.', mbError, MB_OK, IDOK);
 end;
 
 function AppFilesAvailable: Boolean;
@@ -164,6 +164,6 @@ begin
      (CompareText(Command, '"' + ExpandConstant('{app}\speakeasy.exe') + '"') = 0) then
   begin
     if not RegDeleteValue(HKCU, 'Software\Microsoft\Windows\CurrentVersion\Run', 'Speakeasy') then
-      Log('Could not remove the Speakeasy sign-in entry.');
+      Log('Couldn''t remove the Speakeasy sign-in entry.');
   end;
 end;

@@ -409,7 +409,7 @@ const fn text_remedy(blocked: TextBlocked) -> Inserted {
 }
 
 const SELECTION_LOST: Inserted = Inserted::Unavailable(
-    "The clipboard changed or could not be confirmed before pasting. Set “Insert text by” to Copy for manual paste in Settings.",
+    "The clipboard changed or couldn't be confirmed before pasting. Set “Insert text by” to Copy for manual paste in Settings.",
 );
 
 fn finish_paste(
@@ -462,10 +462,10 @@ const fn paste_remedy(blocked: PasteBlocked) -> Inserted {
             "Text copied. Desktop keyboard input is unavailable or paused; paste manually.",
         ),
         PasteBlocked::NoKeyboardState => Inserted::Copied(
-            "Text copied. The desktop's keyboard layout could not be read; paste manually.",
+            "Text copied. The desktop's keyboard layout couldn't be read; paste manually.",
         ),
         PasteBlocked::ShortcutKeys => Inserted::Copied(
-            "Text copied. This desktop could not confirm released shortcut keys; paste manually.",
+            "Text copied. This desktop couldn't confirm released shortcut keys; paste manually.",
         ),
         PasteBlocked::NoPasteKeys => NO_PASTE_BINDING,
     }

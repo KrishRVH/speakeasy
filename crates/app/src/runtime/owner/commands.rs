@@ -99,7 +99,7 @@ pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
         Refusal::Busy => "Finish the current session or practice before starting dictation.",
         Refusal::NotReady => "Wait for desktop access and the local speech model to be ready.",
         Refusal::StartStopped => {
-            "Dictation could not start because desktop control stopped. Resume Speakeasy before trying again."
+            "Dictation couldn't start because desktop control stopped. Resume Speakeasy before trying again."
         },
         Refusal::NotActive => {
             "That ordinary dictation is no longer active. Read status before acting again."
@@ -110,7 +110,7 @@ pub(in crate::runtime) const fn refusal(refusal: Refusal) -> &'static str {
         Refusal::PasteNotReady => "Wait for desktop access before pasting the last dictation.",
         Refusal::NothingToPaste => "No dictation to paste yet.",
         Refusal::PasteStopped => {
-            "The last dictation could not be submitted because desktop control stopped. Resume Speakeasy before trying again."
+            "The last dictation couldn't be submitted because desktop control stopped. Resume Speakeasy before trying again."
         },
         Refusal::Unsupported => {
             "Choose a style or saved preset through the desktop command interface."

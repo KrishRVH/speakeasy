@@ -238,7 +238,7 @@ impl MovieTarget {
                 part,
                 accepted,
             })
-            .map_err(|_closed| anyhow::anyhow!("Video crop geometry could not be saved"))?;
+            .map_err(|_closed| anyhow::anyhow!("Video crop geometry couldn't be saved"))?;
         self.accepted(answer, stopping)
     }
 
@@ -265,7 +265,7 @@ impl MovieTarget {
         if self.cancelled() || stopping.is_closed() {
             return Ok(false);
         }
-        anyhow::ensure!(accepted, "Video crop geometry could not be saved");
+        anyhow::ensure!(accepted, "Video crop geometry couldn't be saved");
         Ok(true)
     }
 

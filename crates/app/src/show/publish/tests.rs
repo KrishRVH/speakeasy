@@ -240,7 +240,7 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
             let error = result.err().context("Checkpoint failure was ignored")?;
             assert_eq!(
                 error.to_string(),
-                "The Show could not be saved because its checkpoint failed. Check Shows for recoverable footage."
+                "The Show couldn't be saved because its checkpoint failed. Check Shows for recoverable footage."
             );
             assert!(
                 error.chain().any(|cause| cause.to_string()

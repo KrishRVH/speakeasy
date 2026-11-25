@@ -77,7 +77,7 @@ function Close-Preview([Diagnostics.Process]$Preview) {
         [uint32]$owner = 0
         $thread = [InstallerPreview]::GetWindowThreadProcessId($Preview.MainWindowHandle, [ref]$owner)
         if ($owner -ne $Preview.Id -or ![InstallerPreview]::PostThreadMessage($thread, 0x0012, [IntPtr]::Zero, [IntPtr]::Zero)) {
-            throw 'Could not close the owned preview.'
+            throw "Couldn't close the owned preview."
         }
         if (!$Preview.WaitForExit(10000)) { throw 'The owned preview did not exit.' }
     } finally {
@@ -214,9 +214,9 @@ function Check-ConsoleImageProtection {
     $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
         $mapping = [InstallerPreview]::CreateFileMapping($source.SafeFileHandle, [IntPtr]::Zero, 0x01000002, 0, 0, $null)
-        if ($mapping -eq [IntPtr]::Zero) { throw 'Could not create an owned CLI image mapping.' }
+        if ($mapping -eq [IntPtr]::Zero) { throw "Couldn't create an owned CLI image mapping." }
         $view = [InstallerPreview]::MapViewOfFile($mapping, 4, 0, 0, [UIntPtr]::Zero)
-        if ($view -eq [IntPtr]::Zero) { throw 'Could not map the owned CLI image.' }
+        if ($view -eq [IntPtr]::Zero) { throw "Couldn't map the owned CLI image." }
         $blocked = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
         if ($blocked.ExitCode -ne 7) { throw 'Upgrade did not refuse a mapped CLI image.' }
         $blocked = Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
@@ -228,10 +228,10 @@ function Check-ConsoleImageProtection {
         throw
     } finally {
         Invoke-Cleanup {
-            if ($view -ne [IntPtr]::Zero -and ![InstallerPreview]::UnmapViewOfFile($view)) { throw 'Could not release the owned CLI image view.' }
+            if ($view -ne [IntPtr]::Zero -and ![InstallerPreview]::UnmapViewOfFile($view)) { throw "Couldn't release the owned CLI image view." }
         } $cleanup
         Invoke-Cleanup {
-            if ($mapping -ne [IntPtr]::Zero -and ![InstallerPreview]::CloseHandle($mapping)) { throw 'Could not release the owned CLI image mapping.' }
+            if ($mapping -ne [IntPtr]::Zero -and ![InstallerPreview]::CloseHandle($mapping)) { throw "Couldn't release the owned CLI image mapping." }
         } $cleanup
         Invoke-Cleanup { $source.Dispose() } $cleanup
         Complete-Cleanup $failure $cleanup 'Console image fixture'
@@ -273,7 +273,7 @@ try {
     New-Item -ItemType Directory -Path (Split-Path $model), (Split-Path $show) -Force | Out-Null
     [IO.File]::WriteAllText($model, 'Synthetic model fixture; never loaded.')
     & (Join-Path $app 'speakeasy-cli.exe') show demo --out $show | Out-Null
-    if ($LASTEXITCODE -ne 0) { throw 'Could not prepare a synthetic Show.' }
+    if ($LASTEXITCODE -ne 0) { throw "Couldn't prepare a synthetic Show." }
     [IO.File]::WriteAllText((Join-Path $show 'user-notes.txt'), 'Keep these edits through every upgrade.')
     $expected = @{}
     foreach ($file in Get-ChildItem -LiteralPath $data -File -Recurse) {

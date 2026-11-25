@@ -186,11 +186,11 @@ async fn process(
     let stats = frames(stdout, stdin, movie, scene, timing, cancelled).await?;
     anyhow::ensure!(
         decoder.wait().await?.success(),
-        "FFmpeg could not decode the saved video; the original Show is unchanged"
+        "FFmpeg couldn't decode the saved video; the original Show is unchanged"
     );
     anyhow::ensure!(
         encoder.wait().await?.success(),
-        "FFmpeg could not encode the export; check free space and FFmpeg H.264/AAC support"
+        "FFmpeg couldn't encode the export; check free space and FFmpeg H.264/AAC support"
     );
     Ok(stats)
 }

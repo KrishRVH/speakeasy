@@ -31,7 +31,7 @@ fn a_copied_show_whose_ink_failed_still_says_what_it_lost() {
     let reported = |snapshot: &Snapshot| failure_after(snapshot, &error).map(|e| e.to_string());
     assert_eq!(
         reported(&copied).as_deref(),
-        Some("Show copied, but its ink could not appear on screen: No display available")
+        Some("Show copied, but its ink couldn't appear on screen: No display available")
     );
     let unnarrated = Snapshot {
         ending: Ending::WindowClosed,
@@ -42,7 +42,7 @@ fn a_copied_show_whose_ink_failed_still_says_what_it_lost() {
     assert_eq!(
         reported(&unnarrated).as_deref(),
         Some(
-            "Show copied without narration, and the recorded window closed. Its ink could not \
+            "Show copied without narration, and the recorded window closed. Its ink couldn't \
              appear on screen: No display available"
         ),
         "The ink failure hid what the Show lost"

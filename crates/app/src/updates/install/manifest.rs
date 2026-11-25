@@ -3,7 +3,7 @@ use ring::signature::{ED25519, UnparsedPublicKey};
 use serde::Deserialize;
 
 pub(super) const NAME: &str = "speakeasy-windows-x64-setup.exe";
-const UNTRUSTED: &str = "This update could not be authenticated. Nothing was installed. Open the release page or try again later.";
+const UNTRUSTED: &str = "This update couldn't be authenticated. Nothing was installed. Open the release page or try again later.";
 
 pub(super) struct Artifact {
     pub(super) size: u64,

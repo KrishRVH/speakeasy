@@ -65,7 +65,7 @@ impl encode::Codec for Codec {
             native.addInput(&input);
             ensure!(
                 native.startWriting(),
-                "The native movie writer could not start"
+                "The native movie writer couldn't start"
             );
             native.startSessionAtSourceTime(CMTime::new(0, 1));
             (native, input)
@@ -153,7 +153,7 @@ impl encode::Codec for Codec {
         let status = unsafe { self.native.status() };
         ensure!(
             status == AVAssetWriterStatus::Completed,
-            "The native movie could not finish"
+            "The native movie couldn't finish"
         );
         self.output.close()
     }

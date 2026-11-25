@@ -443,7 +443,7 @@ fn a_show_whose_narration_was_lost_says_why_in_both_files() {
         summary.lines().skip(1).take(2).collect::<Vec<_>>(),
         [
             SCREEN_STOPPED,
-            "The user's speech could not be transcribed; what the user said is missing."
+            "The user's speech couldn't be transcribed; what the user said is missing."
         ],
         "Both losses survive"
     );

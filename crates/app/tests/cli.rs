@@ -19,7 +19,7 @@ fn isolated_cli(root: &Path) -> anyhow::Result<PathBuf> {
     let isolated = root.join(name);
     if cfg!(unix) {
         let copied = Command::new("cp").arg(CLI).arg(&isolated).status()?;
-        anyhow::ensure!(copied.success(), "cp could not isolate the console entry");
+        anyhow::ensure!(copied.success(), "cp couldn't isolate the console entry");
     } else {
         fs::copy(CLI, &isolated)?;
     }

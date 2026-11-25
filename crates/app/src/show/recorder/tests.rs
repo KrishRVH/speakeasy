@@ -557,7 +557,7 @@ async fn an_area_is_dragged_out_or_left_unchosen_and_earlier_pins_mark_nothing()
     assert_eq!(
         tokio::time::timeout(Duration::from_secs(5), pick(&choice, &lanes)).await?,
         Picked::Unchosen,
-        "The overlay could not appear"
+        "The overlay couldn't appear"
     );
     finish.close();
     assert_eq!(pick(&choice, &lanes).await, Picked::Cancelled);

@@ -664,15 +664,15 @@ fn failure_after(snapshot: &Snapshot, error: &anyhow::Error) -> Option<anyhow::E
             if snapshot.ending == Ending::Finished && snapshot.narration_lost.is_none() =>
         {
             Some(anyhow!(
-                "Show copied, but its ink could not appear on screen: {error:#}"
+                "Show copied, but its ink couldn't appear on screen: {error:#}"
             ))
         },
         Phase::Copied => Some(anyhow!(
-            "{} Its ink could not appear on screen: {error:#}",
+            "{} Its ink couldn't appear on screen: {error:#}",
             snapshot.message
         )),
         Phase::Unchosen => Some(anyhow!(
-            "The Show was cancelled because its area shade could not appear: {error:#}"
+            "The Show was cancelled because its area shade couldn't appear: {error:#}"
         )),
         _ => None,
     }
