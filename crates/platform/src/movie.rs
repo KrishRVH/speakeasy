@@ -431,14 +431,16 @@ pub(crate) mod tests {
         acknowledges_only_once_the_lease_drops(control, target).await;
     }
 
-    #[cfg(target_os = "windows")]
     #[tokio::test]
     async fn checkpoint_and_capture_cancellation_interrupt_an_unanswered_acceptance()
     -> anyhow::Result<()> {
         for cancel_checkpoint in [true, false] {
+            // The deadline outlasts the wait below, so only cancellation can end the handshake.
             let (control, target) = MovieControl::new(
                 PathBuf::from("synthetic.mp4"),
-                Instant::now().checked_add(crate::PATIENCE).unwrap(),
+                Instant::now()
+                    .checked_add(crate::PATIENCE.saturating_mul(3))
+                    .unwrap(),
                 Duration::MAX,
             );
             let (stop, stopping) = async_channel::bounded(1);
