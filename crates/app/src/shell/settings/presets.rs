@@ -200,7 +200,7 @@ impl Settings {
         preset.load(&mut self.config);
         self.own_engine = false;
         self.choosing_model = false;
-        self.vocabulary.stop_revising();
+        self.vocabulary.list_replaced();
         self.edited(cx);
     }
 

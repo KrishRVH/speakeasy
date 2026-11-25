@@ -773,7 +773,7 @@ impl Settings {
             }
             self.config = restored;
             self.own_engine = false;
-            self.vocabulary.stop_revising();
+            self.vocabulary.list_replaced();
         }
         self.notice = error
             .or_else(|| applied?.err().map(|error| error.to_string()))

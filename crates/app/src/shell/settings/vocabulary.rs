@@ -20,6 +20,8 @@ pub(super) struct Editor {
     revision: Pair,
     editing: Option<usize>,
     practiced: Entity<TextField>,
+    /// The correction removed last and where it stood, restorable until the next correction edit.
+    removed: Option<(usize, Correction)>,
 }
 
 struct Pair {
@@ -34,6 +36,7 @@ pub(super) enum Edit {
     Save,
     Cancel,
     Remove(usize),
+    Undo,
     FromPractice(usize),
     AddFromPractice,
 }
@@ -72,6 +75,7 @@ impl Editor {
                 window,
                 cx,
             ),
+            removed: None,
         }
     }
 
@@ -90,6 +94,7 @@ impl Editor {
 
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.editing = None;
+        self.removed = None;
         for field in self.fields() {
             field.update(cx, |field, cx| field.set_text(String::new(), cx));
         }
@@ -105,8 +110,11 @@ impl Editor {
         self.addition.heard.read(cx).text().to_owned()
     }
 
-    pub(super) const fn stop_revising(&mut self) {
+    /// A preset or a failed save replaced the whole list, so the revised row and Undo would act
+    /// on corrections the user no longer sees.
+    pub(super) fn list_replaced(&mut self) {
         self.editing = None;
+        self.removed = None;
     }
 }
 
@@ -191,6 +199,7 @@ impl Settings {
         if cx.global::<Services>().is_quitting() {
             return;
         }
+        let removed = self.vocabulary.removed.take();
         match edit {
             Edit::Add => {
                 if self.store_correction(self.vocabulary.addition.draft(cx), None, cx) {
@@ -245,17 +254,44 @@ impl Settings {
             },
             Edit::Remove(index) => {
                 if index < self.config.vocabulary.len() {
-                    self.config.vocabulary.remove(index);
+                    let correction = self.config.vocabulary.remove(index);
                     self.vocabulary.editing = match self.vocabulary.editing {
                         Some(editing) if editing == index => None,
                         Some(editing) if editing > index => Some(editing.saturating_sub(1)),
                         editing => editing,
                     };
                     self.edited(cx);
+                    self.vocabulary.removed = Some((index, correction));
+                }
+            },
+            Edit::Undo => {
+                if let Some(removed) = removed {
+                    self.restore_correction(removed, cx);
                 }
             },
         }
         cx.notify();
+    }
+
+    fn restore_correction(
+        &mut self,
+        (index, correction): (usize, Correction),
+        cx: &mut Context<'_, Self>,
+    ) {
+        let mut rules = self.config.vocabulary.clone();
+        let index = index.min(rules.len());
+        rules.insert(index, correction);
+        // Settings restored from disk since the removal may already hold the phrase.
+        if vocabulary::validate(&rules).is_err() {
+            return;
+        }
+        self.config.vocabulary = rules;
+        if let Some(editing) = &mut self.vocabulary.editing
+            && *editing >= index
+        {
+            *editing = editing.saturating_add(1);
+        }
+        self.edited(cx);
     }
 
     fn store_correction(
@@ -485,6 +521,16 @@ impl Settings {
                     .child(ui.text("Fix what Speakeasy mishears. Works with every speech model.")),
             )
             .child(kit.group(rows))
+            .when_some(self.vocabulary.removed.as_ref(), |section, (_, rule)| {
+                section.child(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(10.0))
+                        .child(ui.text(format!("Removed “{}”.", rule.heard)))
+                        .child(ui.button("Undo", Action::Correction(Edit::Undo), Weight::Quiet)),
+                )
+            })
     }
 }
 

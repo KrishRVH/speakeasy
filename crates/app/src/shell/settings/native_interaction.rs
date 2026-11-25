@@ -63,6 +63,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 onboarding::native_tests::exercise(settings, cx)?;
                 onboarding::native_tests::setup_rechecks_unchanged_settings(settings, cx).await?;
                 presets::native_tests::exercise(settings, cx)?;
+                correction_undo(settings, cx)?;
                 settings.update(cx, |view, _, cx| {
                     let applied = cx.global::<Services>().config.language.clone();
                     view.config.language = "de".into();
@@ -275,6 +276,48 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
     outcome
         .try_recv()
         .context("Native interaction acceptance did not complete")?
+}
+
+fn correction_undo(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
+    use crate::transcript::vocabulary::Correction;
+
+    settings.update(cx, |view, window, cx| {
+        let rule = |heard: &str, written: &str| Correction {
+            heard: heard.into(),
+            written: written.into(),
+        };
+        view.config.vocabulary = vec![rule("x ray", "X-ray"), rule("cube control", "kubectl")];
+        view.edit_correction(vocabulary::Edit::Remove(0), window, cx);
+        view.edit_correction(vocabulary::Edit::Undo, window, cx);
+        let heard = |view: &Settings| {
+            view.config
+                .vocabulary
+                .iter()
+                .map(|rule| rule.heard.clone())
+                .collect::<Vec<_>>()
+        };
+        ensure!(
+            heard(view) == ["x ray", "cube control"],
+            "Undo did not put a removed correction back in its place"
+        );
+        view.edit_correction(vocabulary::Edit::Remove(0), window, cx);
+        view.finish_save(
+            SaveOutcome::Failed {
+                error: "Synthetic save failure".into(),
+                earlier: None,
+            },
+            cx,
+        );
+        let restored = view.config.vocabulary.clone();
+        view.edit_correction(vocabulary::Edit::Undo, window, cx);
+        ensure!(
+            view.config.vocabulary == restored,
+            "Undo changed a list that a failed save had replaced"
+        );
+        view.notice = None;
+        view.config.vocabulary.clear();
+        anyhow::Ok(())
+    })?
 }
 
 fn parakeet_cleanup_language(
