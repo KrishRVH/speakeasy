@@ -189,8 +189,8 @@ Use [the shared HTTP builders](../crates/app/src/http.rs). Linux needs the share
 and platform certificate verification for internet requests. The engine's health route gates
 startup. A successful silent inference, used for warmup or worker reuse, establishes that it can run
 an inference and that abandoned work has drained. Constructing a worker-load future is inert until
-the owner polls it after retirement. Keep the macOS Metal tensor-kernel opt-out for local engines
-and the Linux CPU inference probe.
+the owner polls it after retirement. Keep the local engines' macOS Metal tensor-kernel and Windows
+OBS Vulkan-layer opt-outs and the Linux CPU inference probe.
 
 Whisper timed requests split segments at word boundaries. Keep the first word of each segment
 separate and join continuation tokens within that word. The owner filters isolated Whisper credits

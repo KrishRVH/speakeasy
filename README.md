@@ -27,8 +27,8 @@ glibc 2.35 or newer.
   Shows. Keep `speakeasy-cli.exe` beside `speakeasy.exe` to run commands from a terminal.
 - **macOS.** Drag Speakeasy to Applications. Allow Microphone and Accessibility for dictation and
   Screen & System Audio Recording for Shows. macOS 27.3 and later also need **System & App
-  Protection Override** to paste. If Gatekeeper asks, use **Privacy & Security → Open Anyway**.
-  Replacing a locally signed build may require granting permissions again.
+  Protection Override** to paste or type. If Gatekeeper asks, use **Privacy & Security → Open
+  Anyway**. Replacing a locally signed build may require granting permissions again.
 - **Linux.** See [Linux installation](#linux-experimental).
 
 The setup guide downloads Parakeet and its local engine, helps you grant permissions, and opens a

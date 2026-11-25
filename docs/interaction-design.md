@@ -114,9 +114,9 @@ shortcut and private practice, followed by speech, writing, and presets. Words k
 hints together. General holds app-wide choices, platform settings, and actions such as reset.
 Settings reports the actual error and a remedy after the pill fades, and the tray status names what
 failed, such as “Microphone unavailable”. Preset rows keep their identity as their Use, Update, or
-Delete actions change. Delete acts at once and offers Undo until the next preset edit. A preset
-chosen from the tray lasts until Speakeasy quits: Settings tags it “This session” and offers to keep
-it.
+Delete actions change. Deleting a preset or removing a correction acts at once and offers Undo until
+the next edit of that list. A preset chosen from the tray lasts until Speakeasy quits: Settings tags
+it “This session” and offers to keep it.
 
 Windows and Mac use the same tray menu policy. The Mac icon uses its badge rather than color to show
 recording. Settings close hides its existing window and leaves saves and setup running. Relaunch
@@ -228,9 +228,9 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   or on Windows into the desktop, a taskbar, or its overflow flyout, which drop it; a desktop rename
   box still takes text. A paste then leaves the text copied and says where to put it. macOS 27.3 and
   later grant posting keys apart from Accessibility, under System & App Protection Override; without
-  that grant a paste leaves the text copied, the pill names that pane, and macOS is asked to list
-  Speakeasy there; Settings' Accessibility row does not cover it. The grant applies after a restart.
-  No 27.3 device has verified this yet.
+  that grant a paste leaves the text copied and typing leaves the clipboard alone, the pill names
+  that pane, and macOS is asked to list Speakeasy there; Settings' Accessibility row does not cover
+  it. The grant applies after a restart. No 27.3 device has verified this yet.
 - On Windows and macOS, a dictation delivered straight after the last one starts with one space when
   the earlier text ended a word and the new one does not open with closing punctuation. Straight
   after means the same window (macOS: the same app), no key typed, and no pointer movement in
