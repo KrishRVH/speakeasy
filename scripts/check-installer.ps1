@@ -10,13 +10,14 @@ $Installer = (Resolve-Path $Installer).Path
 $work = Join-Path $env:RUNNER_TEMP ('speakeasy-installer-' + [guid]::NewGuid())
 $app = Join-Path $work 'app'
 $data = Join-Path $env:LOCALAPPDATA 'speakeasy'
+$settings = Join-Path $env:APPDATA 'speakeasy'
 $runKey = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Run'
 function Get-SignInCommand {
     # Get-ItemPropertyValue throws for a missing value even with SilentlyContinue.
     return [Microsoft.Win32.Registry]::GetValue('HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Run', 'Speakeasy', $null)
 }
 $existing = Get-SignInCommand
-if ($null -ne $existing -or (Test-Path $data)) { throw 'The runner already has Speakeasy state; refusing to change it.' }
+if ($null -ne $existing -or (Test-Path $data) -or (Test-Path $settings)) { throw 'The runner already has Speakeasy state; refusing to change it.' }
 $configuration = Join-Path $work 'selected Ω config/settings.json'
 $configurationHash = $null
 $model = Join-Path $data 'models/synthetic.bin'
@@ -27,7 +28,7 @@ function Check-UserData {
     if ($configurationHash -and (Get-FileHash -LiteralPath $configuration).Hash -ne $configurationHash) {
         throw 'Maintenance changed the selected custom settings file.'
     }
-    $files = @(Get-ChildItem -LiteralPath $data -File -Recurse)
+    $files = @(Get-ChildItem -LiteralPath $data, $settings -File -Recurse)
     if ($files.Count -ne $before.Count) { throw 'Maintenance added or removed user data.' }
     foreach ($file in $files) {
         if ((Get-FileHash -LiteralPath $file.FullName).Hash -ne $before[$file.FullName]) {
@@ -252,7 +253,7 @@ public static class InstallerPreview {
 $failure = $null
 $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
 try {
-    New-Item -ItemType Directory -Path $work, $data -Force | Out-Null
+    New-Item -ItemType Directory -Path $work, $data, $settings -Force | Out-Null
     Invoke-Setup
     $setupSignature = Get-AuthenticodeSignature -LiteralPath $Installer
     if ($setupSignature.Status -eq 'Valid') {
@@ -268,7 +269,7 @@ try {
     $currentImageHash = (Get-FileHash -LiteralPath (Join-Path $app 'speakeasy.exe')).Hash
     New-Item -ItemType Directory -Path (Split-Path $configuration) -Force | Out-Null
     Copy-Item (Join-Path $app 'settings.example.json') $configuration
-    Copy-Item (Join-Path $app 'settings.example.json') (Join-Path $data 'settings.json')
+    Copy-Item (Join-Path $app 'settings.example.json') (Join-Path $settings 'settings.json')
     $configurationHash = (Get-FileHash -LiteralPath $configuration).Hash
     New-Item -ItemType Directory -Path (Split-Path $model), (Split-Path $show) -Force | Out-Null
     [IO.File]::WriteAllText($model, 'Synthetic model fixture; never loaded.')
@@ -276,7 +277,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "Couldn't prepare a synthetic Show." }
     [IO.File]::WriteAllText((Join-Path $show 'user-notes.txt'), 'Keep these edits through every upgrade.')
     $expected = @{}
-    foreach ($file in Get-ChildItem -LiteralPath $data -File -Recurse) {
+    foreach ($file in Get-ChildItem -LiteralPath $data, $settings -File -Recurse) {
         $expected[$file.FullName] = (Get-FileHash -LiteralPath $file.FullName).Hash
     }
     $before = $expected
@@ -304,8 +305,9 @@ try {
     Invoke-Cleanup {
         if ($null -ne (Get-SignInCommand)) { Remove-ItemProperty -Path $runKey -Name 'Speakeasy' }
     } $cleanup
-    # The guard admitted only a fresh data directory and no sign-in entry; every fixture is ours.
-    foreach ($fixture in $data, $work) {
+    # The guard admitted only fresh settings and data directories and no sign-in entry; every
+    # fixture is ours.
+    foreach ($fixture in $data, $settings, $work) {
         Invoke-Cleanup {
             if (Test-Path -LiteralPath $fixture) { Remove-Item -LiteralPath $fixture -Force -Recurse }
         } $cleanup
