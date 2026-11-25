@@ -4,7 +4,10 @@ use std::{
 };
 
 use anyhow::ensure;
-use gpui::{AsyncApp, Pixels, Render, RenderImage, Size, div, prelude::*};
+use gpui::{
+    AsyncApp, Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels,
+    PlatformInput, Point, Render, RenderImage, Size, div, prelude::*,
+};
 use tokio::sync::oneshot;
 
 use super::*;
@@ -22,7 +25,7 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
         .build()?;
     let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, _) = crate::application::new().unwrap();
+    let (application, _) = crate::application::new()?;
     application.with_assets(crate::icons::Icons).run(move |cx| {
         crate::load_brand_font(cx);
         cx.spawn(async move |cx| {
@@ -528,7 +531,6 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     .await?;
     let (checkpoint, writer) = crate::show::Keeper::fixture(
         &root,
-        SystemTime::now(),
         1_000,
         speakeasy_show::Size {
             width: 80.0,
@@ -991,6 +993,44 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
     })?;
     ensure!(announced, "Send to agent did not say what it copied");
     Ok(())
+}
+
+/// Draws first, so the click lands on the current layout.
+fn press(
+    window: WindowHandle<Review>,
+    position: Point<Pixels>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            }),
+            cx,
+        );
+    })
 }
 
 async fn wait_for(

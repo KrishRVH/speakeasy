@@ -1,7 +1,4 @@
-use gpui::{
-    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, Point,
-    point,
-};
+use gpui::point;
 
 use super::*;
 
@@ -186,43 +183,6 @@ fn trash_of(
             ),
         ))
     })?
-}
-
-fn press(
-    window: WindowHandle<Review>,
-    position: Point<Pixels>,
-    cx: &mut AsyncApp,
-) -> anyhow::Result<()> {
-    cx.update_window(window.into(), |_, window, cx| {
-        window.draw(cx).clear(cx);
-        window.dispatch_event(
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position,
-                pressed_button: None,
-                modifiers: Modifiers::default(),
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-            }),
-            cx,
-        );
-    })
 }
 
 #[expect(

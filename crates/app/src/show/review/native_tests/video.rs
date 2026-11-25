@@ -1,7 +1,5 @@
 mod annotations;
 
-use gpui::{Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput};
-
 use super::*;
 use crate::show::store::movie;
 
@@ -13,7 +11,7 @@ fn native_show_video_review_scrubs_steps_and_releases_its_reader() -> anyhow::Re
         .build()?;
     let _entered = runtime.enter();
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, _) = crate::application::new().unwrap();
+    let (application, _) = crate::application::new()?;
     application.with_assets(crate::icons::Icons).run(move |cx| {
         crate::load_brand_font(cx);
         cx.spawn(async move |cx| {
@@ -173,36 +171,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     }
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     let bounds = window.read_with(cx, |view, _| view.timeline.bounds)?;
-    let position = bounds.center();
-    cx.update_window(window.into(), |_, window, cx| {
-        window.dispatch_event(
-            PlatformInput::MouseMove(MouseMoveEvent {
-                position,
-                pressed_button: None,
-                modifiers: Modifiers::default(),
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseDown(MouseDownEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-                first_mouse: false,
-            }),
-            cx,
-        );
-        window.dispatch_event(
-            PlatformInput::MouseUp(MouseUpEvent {
-                button: MouseButton::Left,
-                position,
-                modifiers: Modifiers::default(),
-                click_count: 1,
-            }),
-            cx,
-        );
-    })?;
+    press(window, bounds.center(), cx)?;
     wait_for(window, ready, cx).await?;
     window.read_with(cx, |view, _| -> anyhow::Result<()> {
         let ImageState::Ready(decoded) = &view.image else {
