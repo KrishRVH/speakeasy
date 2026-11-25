@@ -10,12 +10,7 @@ use super::{
     TrayChanges, TrayCommand, TrayState,
     icon::{self, IconStyle},
 };
-use crate::{
-    shell::{LastShow, Services},
-    status::Indicator,
-    theme::Theme,
-    transcript::style::Style,
-};
+use crate::{shell::LastShow, status::Indicator, theme::Theme, transcript::style::Style};
 
 const ICON_STYLE: IconStyle = if cfg!(target_os = "macos") {
     IconStyle::Template
@@ -131,27 +126,30 @@ impl Presenter {
 }
 
 pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
+    let mut changes = TrayChanges::new(cx);
+    let state = changes.first(cx);
+    let item = |TrayItem { label, enabled }| MenuItem::new(label, enabled, None);
     let menu = Menu::new();
-    let status = MenuItem::new("Loading…", false, None);
-    let pause = MenuItem::new("Pause dictation", true, None);
-    let toggle = MenuItem::new("Start dictation", false, None);
-    let cancel = MenuItem::new("Cancel dictation", false, None);
-    let paste_last = MenuItem::new("Paste last dictation", false, None);
+    let status = MenuItem::new(state.status.outside_settings(), false, None);
+    let pause = item(state.menu.pause);
+    let toggle = item(state.menu.toggle);
+    let cancel = item(state.menu.cancel);
+    let paste_last = item(state.menu.paste_last);
     let style_menu = Submenu::new("Dictation style", true);
     let presets = Submenu::new("Preset", false);
     let styles = Style::ALL.map(|style| {
         (
             style,
-            CheckMenuItem::new(style.label(), true, style == Style::Prose, None),
+            CheckMenuItem::new(style.label(), true, style == state.style, None),
         )
     });
     for (_, item) in &styles {
         style_menu.append(item)?;
     }
-    let show_screen = MenuItem::new("Record the screen for a Show", false, None);
-    let show_area = MenuItem::new("Record an area for a Show…", false, None);
-    let copy_last_show = MenuItem::new("Copy last Show", false, None);
-    let open_last_show = MenuItem::new("Open last Show", false, None);
+    let show_screen = item(state.menu.show_screen);
+    let show_area = item(state.menu.show_area);
+    let copy_last_show = MenuItem::new("Copy last Show", state.last_show, None);
+    let open_last_show = MenuItem::new("Open last Show", state.last_show, None);
     let shows = MenuItem::new("Shows…", true, None);
     let settings = MenuItem::new("Settings…", true, None);
     let quit = MenuItem::new("Quit Speakeasy", true, None);
@@ -174,14 +172,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &settings,
         &quit,
     ])?;
-    let icon = build_icon(
-        menu,
-        icon::raster(
-            Indicator::Paused,
-            cx.global::<Services>().config.theme,
-            ICON_STYLE,
-        ),
-    )?;
+    let drawn = (state.status.indicator, state.theme);
+    let icon = build_icon(menu, icon::raster(drawn.0, drawn.1, ICON_STYLE))?;
     let (commands, refreshes) = queue_commands(
         [
             (settings.id().clone(), TrayCommand::Settings),
@@ -228,9 +220,10 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         show_area,
         copy_last_show,
         open_last_show,
-        drawn: None,
+        drawn: Some(drawn),
     };
-    let mut changes = TrayChanges::new(cx);
+    // The items already hold this state; presenting it fills the tooltip and preset submenu.
+    presenter.present(state);
     let updates = cx.spawn(async move |cx| {
         loop {
             let state = tokio::select! {

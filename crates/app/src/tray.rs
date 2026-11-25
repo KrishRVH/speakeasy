@@ -153,6 +153,13 @@ impl TrayChanges {
         cx.update(|cx| TrayState::new(cx.global::<Services>(), &self.snapshots.borrow_and_update()))
     }
 
+    /// The state the tray opens with, so its items start with their live labels.
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
+    fn first(&mut self, cx: &App) -> &TrayState {
+        let state = TrayState::new(cx.global::<Services>(), &self.snapshots.borrow_and_update());
+        self.last.insert(state)
+    }
+
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     fn refresh(&mut self, cx: &AsyncApp) -> &TrayState {
         let state = self.read(cx);
