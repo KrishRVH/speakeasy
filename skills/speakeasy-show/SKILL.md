@@ -76,5 +76,5 @@ MCP provides `show_list`, `show_read`, and `show_image` within configured roots.
 contact sheets, summary, and timed narration, then request the relevant image by time, phrase, or
 mark. Requested content reaches the calling agent and may reach its model provider.
 `show mcp --setup` prints configuration snippets. `show --help` describes the installed commands.
-`show skill --install AGENT_SKILLS_DIR` installs the guide and updates the copy it installed, but
-never one with edits.
+`show skill --install AGENT_SKILLS_DIR` installs the guide, replacing any copy already there, and
+each Speakeasy update rewrites it.

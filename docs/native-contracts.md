@@ -21,6 +21,17 @@ Windows hook or macOS tap serves it on the input thread through the shared
 it before the next key, so a closed Settings window never withholds a key. A key the recording takes
 stays withheld through its release, so the focused app never sees half a keystroke.
 
+## Windows update signal
+
+The [update signal](../crates/platform/src/windows/update.rs) is one named manual-reset event per
+sign-in session. Each [MCP](../crates/app/src/show/mcp.rs) server watches it and exits, because it
+maps both Speakeasy images and Windows refuses to overwrite a mapped image. The
+[handoff](../crates/app/src/updates/install/handoff.rs) sets it only after the installer starts,
+which keeps a failed handoff from ending servers, and duplicates its handle into the installer, so a
+server an agent starts again before the files are replaced ends too. The installer checks its files
+after the app exits. Other commands don't watch the signal, so the installer still refuses while one
+runs.
+
 ## Child process containment
 
 Terminate a [process group](../crates/platform/src/process.rs) before reaping its leader;

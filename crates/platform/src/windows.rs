@@ -10,6 +10,7 @@ pub(crate) mod movie;
 mod presentation;
 pub(crate) mod registry;
 pub(crate) mod screen;
+pub(crate) mod update;
 
 use std::{
     io,

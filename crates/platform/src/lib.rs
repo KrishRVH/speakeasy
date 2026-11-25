@@ -42,6 +42,8 @@ use self::windows as native;
 pub use self::windows::installation::installed_directory;
 #[cfg(target_os = "windows")]
 pub use self::windows::login::{start_at_login, startup_approved};
+#[cfg(target_os = "windows")]
+pub use self::windows::update::{UpdateWatch, announce_update, watch_for_update};
 pub use self::{
     awake::{Awake, Keep},
     clipboard::{ClipboardContent, copy_content},
@@ -109,7 +111,7 @@ pub struct TrayMenu {
     pub show_screen: TrayItem,
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub show_area: TrayItem,
-}
     /// Whether a saved preset can be chosen; the items themselves list the saved presets.
     #[cfg(any(target_os = "windows", target_os = "macos"))]
     pub choose_preset: bool,
+}

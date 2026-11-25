@@ -2,7 +2,7 @@ pub(crate) mod presets;
 
 use std::{
     fs,
-    io::{self, ErrorKind, Write as _},
+    io::{self, ErrorKind},
     ops::Deref,
     path::{Path, PathBuf},
 };
@@ -527,7 +527,7 @@ impl Config {
             },
             Err(error) => return Err(cannot_save(error)),
         };
-        replace(path, &contents).map_err(cannot_save)
+        crate::paths::replace(path, &contents).map_err(cannot_save)
     }
 }
 
@@ -674,20 +674,6 @@ fn changes<'a, T: Serialize + 'a>(
             (key, value)
         })
         .collect())
-}
-
-/// Renames a temporary file beside `target` over it, on the same filesystem, so a failure never
-/// leaves half a file.
-fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
-    let directory = target
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    fs::create_dir_all(directory)?;
-    let mut file = tempfile::NamedTempFile::new_in(directory)?;
-    file.write_all(contents)?;
-    file.persist(target)?;
-    Ok(())
 }
 
 #[cfg(test)]

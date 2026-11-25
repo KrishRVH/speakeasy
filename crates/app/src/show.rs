@@ -8,6 +8,7 @@ pub(crate) mod preview;
 mod publish;
 mod recorder;
 pub(crate) mod review;
+mod skill;
 mod store;
 pub(crate) mod wsl;
 
@@ -16,6 +17,7 @@ pub(crate) use self::{
     overlay::{Canvas, attend as attend_overlay},
     publish::{Origin, Publication, Reopened, publish, reopen},
     recorder::{ScreenRecorder, Unwound},
+    skill::follow_update as follow_skill_update,
     store::{
         SavedShow, attend as attend_retention, checkpoint,
         checkpoint::{AudioLog, Checkpoint, Checkpointing, FrameLog, Interrupted, Keeper, Kept},

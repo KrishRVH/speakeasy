@@ -5,29 +5,19 @@ mod wait;
 
 use std::{
     ffi::{OsStr, OsString},
-    io::{self, Write as _},
+    io,
     path::{Path, PathBuf},
     time::{Duration, SystemTime},
 };
 
 use anyhow::Context as _;
-use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
-use sha2::{Digest as _, Sha256};
 use speakeasy_show::{Demo, Location, Typeface};
 
 use super::{
     evidence::query::{self, Query},
+    skill::{self, SKILL},
     store::{self, address, recall, retention},
 };
-
-const SKILL: &str = include_str!("../../../../skills/speakeasy-show/SKILL.md");
-
-pub(super) fn reading_guide() -> &'static str {
-    SKILL
-        .strip_prefix("---\n")
-        .and_then(|front| front.split_once("\n---\n"))
-        .map_or(SKILL, |(_, guide)| guide.trim_start())
-}
 
 const DEMO_SIZE: (u32, u32) = (1_440, 900);
 
@@ -85,7 +75,7 @@ including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
 mcp serves read-only evidence tools over stdio within explicit roots; --setup prints client snippets.
 skill prints the agent reading guide for this installed version.
---install DIR writes DIR/speakeasy-show/SKILL.md and updates a copy it wrote; edits are never overwritten.
+--install DIR writes DIR/speakeasy-show/SKILL.md, replacing any copy there; updates rewrite it.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running Speakeasy app.";
 
@@ -231,7 +221,7 @@ impl Command {
             Self::Skill {
                 install: Some(directory),
             } => {
-                let path = install_skill(&directory)?;
+                let path = skill::install(&directory)?;
                 writeln!(out, "Show skill available at {}", path.display())?;
             },
             Self::Source(request) => request.write(out)?,
@@ -381,49 +371,6 @@ fn locate(show: &Path) -> anyhow::Result<PathBuf> {
     Ok(address::resolve(show, || {
         store::directory().map_err(io::Error::other)
     })?)
-}
-
-/// Ends an installed guide with the digest of the text above it. A later install replaces a copy
-/// whose text still matches its digest, from any earlier version, and never one the user edited.
-const STAMP: &str = "\n<!-- Speakeasy updates this guide until it is edited. sha256 ";
-
-fn stamped(guide: &str) -> String {
-    let digest = STANDARD_NO_PAD.encode(Sha256::digest(guide));
-    format!("{guide}{STAMP}{digest} -->\n")
-}
-
-fn unedited(installed: &[u8]) -> bool {
-    std::str::from_utf8(installed).is_ok_and(|installed| {
-        installed
-            .rfind(STAMP)
-            .and_then(|end| installed.get(..end))
-            .is_some_and(|guide| stamped(guide) == installed)
-    })
-}
-
-fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
-    let directory = std::path::absolute(directory)?.join("speakeasy-show");
-    std::fs::create_dir_all(&directory).context("Can't create the agent's skill directory")?;
-    let path = directory.join("SKILL.md");
-    let current = stamped(SKILL);
-    match std::fs::read(&path) {
-        Ok(installed) if installed == current.as_bytes() => return Ok(path),
-        Ok(installed) if unedited(&installed) => {},
-        Ok(_) => anyhow::bail!(
-            "{} differs from the guide Speakeasy installed, so it may hold your edits; move it aside to install the current guide",
-            path.display()
-        ),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => {},
-        Err(error) => return Err(error).context("Can't read the existing Show skill"),
-    }
-    // Renamed over the installed copy, so a failed write never leaves half a guide.
-    let mut staged = tempfile::NamedTempFile::new_in(&directory)
-        .context("Can't write into the agent's skill directory")?;
-    staged.write_all(current.as_bytes())?;
-    staged
-        .persist(&path)
-        .context("Can't replace the installed Show skill")?;
-    Ok(path)
 }
 
 fn demo(chosen: Option<PathBuf>, out: &mut impl io::Write) -> anyhow::Result<()> {

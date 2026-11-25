@@ -74,6 +74,10 @@ impl Command {
             Self::Serve { roots } => {
                 let roots = Roots::open(&roots, super::store::directory().ok())
                     .map_err(anyhow::Error::msg)?;
+                // Without the watch this server still serves, and an update refuses as it does
+                // for any running command.
+                #[cfg(target_os = "windows")]
+                let _update = speakeasy_platform::watch_for_update(end_for_update).ok();
                 protocol::serve(&roots, &mut io::stdin().lock(), out)?;
             },
         }
@@ -81,8 +85,18 @@ impl Command {
     }
 }
 
+/// Ends this server so an update can replace Speakeasy; the agent's next start runs the new version.
+#[cfg(target_os = "windows")]
+#[expect(
+    clippy::exit,
+    reason = "The read-only server keeps no state, and its main thread is blocked reading requests"
+)]
+fn end_for_update() {
+    std::process::exit(0);
+}
+
 fn instructions() -> String {
-    format!("{DISCLOSURE}\n\n{}", super::command::reading_guide())
+    format!("{DISCLOSURE}\n\n{}", super::skill::reading_guide())
 }
 
 fn setup(

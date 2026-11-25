@@ -85,6 +85,13 @@ impl Installer {
         let child = command
             .spawn()
             .context("Can't start the verified installer. Reopen Speakeasy and try again.")?;
+        // Agents' Show MCP servers map both images; ending them while the installer runs lets it
+        // replace them. It checks its files only after this process exits.
+        #[expect(
+            clippy::let_underscore_must_use,
+            reason = "Speakeasy is quitting for the installer, which reports a server still holding its files"
+        )]
+        let _ = speakeasy_platform::announce_update(&child);
         #[expect(
             clippy::let_underscore_must_use,
             reason = "The installer owns the staged bytes after handoff; the next update clears the cache"

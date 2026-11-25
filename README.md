@@ -240,6 +240,12 @@ arguments to expose specific Shows or folders of Shows to `show_list`, `show_rea
 `show_image`. From WSL, the Windows console executable takes Windows roots and Show paths. Content
 requested by an agent may reach its model provider.
 
+`show skill --install DIR` puts the reading guide in an agent's skills folder, replacing any copy
+there. Speakeasy records each copy in its data folder, and the first Show command after an update
+rewrites the copies still there. The MCP configuration names the installed executable, so the
+agent's next server start runs the update. On Windows, an update ends running MCP servers so the
+installer can replace Speakeasy; reconnect the agent's Speakeasy server afterward.
+
 ## Linux (experimental)
 
 Use the x86_64 AppImage or bundled tar. The app needs a working Vulkan driver, desktop audio, and a

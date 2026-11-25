@@ -116,10 +116,11 @@ Tests live with their modules. Use the linked integration tests when a change cr
   [reader](../crates/show/src/bundle/read.rs) own the current format.
   [Command](../crates/app/src/show/command.rs) and [MCP](../crates/app/src/show/mcp.rs) share
   [evidence reads](../crates/app/src/show/evidence.rs). MCP resolves Show folders within explicit
-  roots. The [bundled skill](../skills/speakeasy-show/SKILL.md) also supplies MCP's reading guide.
-  Check [Bundle](../crates/show/src/bundle/tests.rs),
-  [commands](../crates/app/src/show/command/tests.rs), and
-  [MCP](../crates/app/src/show/mcp/tests.rs).
+  roots. [Skill](../crates/app/src/show/skill.rs) installs the
+  [bundled skill](../skills/speakeasy-show/SKILL.md), which also supplies MCP's reading guide, and
+  rewrites the recorded copies once per update. Check [Bundle](../crates/show/src/bundle/tests.rs),
+  [commands](../crates/app/src/show/command/tests.rs),
+  [skill](../crates/app/src/show/skill/tests.rs), and [MCP](../crates/app/src/show/mcp/tests.rs).
 - **Show video.** [Movie recorder](../crates/platform/src/movie/recording.rs) owns the native
   encoder and its checkpoint lease. [Movie prefix](../crates/show/src/movie.rs) finds complete
   fragments. [Store movie](../crates/app/src/show/store/movie.rs) publishes the playable prefix and

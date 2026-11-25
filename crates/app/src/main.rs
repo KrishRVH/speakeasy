@@ -142,7 +142,10 @@ fn main() -> ExitCode {
         Invocation::Send { request, settings } => {
             in_terminal(|| Instance::send(&paths::settings_file(settings)?, request))
         },
-        Invocation::Show(command) => in_terminal(|| command.run()),
+        Invocation::Show(command) => in_terminal(|| {
+            show::follow_skill_update();
+            command.run()
+        }),
         Invocation::Control(control::Invocation { settings, command }) => {
             let reply = match paths::settings_file(settings) {
                 Ok(path) => Instance::control(&path, command),

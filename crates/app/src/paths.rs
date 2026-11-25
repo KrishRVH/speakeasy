@@ -1,6 +1,7 @@
 use std::{
     ffi::OsString,
-    io::{self, ErrorKind},
+    fs,
+    io::{self, ErrorKind, Write as _},
     path::{Path, PathBuf},
 };
 
@@ -60,6 +61,20 @@ fn command_at(
         })
     });
     (path.is_absolute() && path.to_str().is_some() && !temporary && is_file(&path)).then_some(path)
+}
+
+/// Renames a temporary file beside `target` over it, on the same filesystem, so a failure never
+/// leaves half a file.
+pub(crate) fn replace(target: &Path, contents: &[u8]) -> io::Result<()> {
+    let directory = target
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(directory)?;
+    let mut file = tempfile::NamedTempFile::new_in(directory)?;
+    file.write_all(contents)?;
+    file.persist(target)?;
+    Ok(())
 }
 
 pub(crate) fn remedy(error: &io::Error) -> &'static str {
