@@ -105,6 +105,8 @@ impl Env<Sample> for Log {
         true
     }
 
+    fn expose(&mut self, _: &u64) {}
+
     fn revoke(&mut self, _: &u64) {}
 
     fn keep(&mut self, _: Duration) -> Keeping<Sample> {

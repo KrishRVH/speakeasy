@@ -664,6 +664,20 @@ impl<P: Payload> Session<P> {
         self.stage = Stage::Delivering { dictation };
     }
 
+    /// Shields a hands-free recording's permit; a Show already holds its shield. False when a
+    /// native cancel already revoked it.
+    pub(super) fn shield_hands_free(&self, env: &mut impl Env<P>) -> bool {
+        self.is_show() || env.shield(&self.permit)
+    }
+
+    /// Lifts a hands-free recording's shield for delivery, so native Escape still stops a paste
+    /// under way. A Show keeps its shield.
+    pub(super) fn expose(&self, env: &mut impl Env<P>) {
+        if !self.is_show() {
+            env.expose(&self.permit);
+        }
+    }
+
     pub(super) fn turn_into_show(&mut self, scope: P::Scope, env: &mut impl Env<P>) -> bool {
         if !self.is_dictation()
             || self.for_script()

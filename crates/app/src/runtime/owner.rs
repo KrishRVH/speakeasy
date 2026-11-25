@@ -442,6 +442,10 @@ impl<P: Ports> Env<Native> for World<P> {
         permit.shield()
     }
 
+    fn expose(&mut self, permit: &InsertPermit) {
+        permit.expose();
+    }
+
     fn revoke(&mut self, permit: &InsertPermit) {
         permit.revoke();
     }

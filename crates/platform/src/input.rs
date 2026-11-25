@@ -157,6 +157,10 @@ impl InsertPermit {
         self.gate.shield(self.generation)
     }
 
+    pub fn expose(&self) {
+        self.gate.expose(self.generation);
+    }
+
     #[must_use]
     pub fn active(&self) -> bool {
         self.gate.is_current(self.generation)
@@ -216,6 +220,18 @@ impl Gate {
 
     fn shield(&self, generation: u64) -> bool {
         self.mark_current(generation, Self::SHIELDED)
+    }
+
+    #[expect(
+        clippy::let_underscore_must_use,
+        reason = "A generation that is no longer current has no shield to lift"
+    )]
+    fn expose(&self, generation: u64) {
+        let _ = self
+            .0
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+                (current & !Self::SHIELDED == generation).then_some(generation)
+            });
     }
 
     fn mark_current(&self, generation: u64, bit: u64) -> bool {

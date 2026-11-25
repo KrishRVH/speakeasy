@@ -175,6 +175,8 @@ impl Env<Abstract> for Oracle {
         self.choose(Query::Shield, [("shielded", true), ("exposed", false)])
     }
 
+    fn expose(&mut self, (): &()) {}
+
     fn revoke(&mut self, (): &()) {
         self.effects.push(Effect::Revoke);
     }

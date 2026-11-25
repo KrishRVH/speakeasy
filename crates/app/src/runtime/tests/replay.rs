@@ -73,6 +73,37 @@ async fn paste_on_the_press_that_finishes_hands_free_keeps_that_dictation() -> a
 }
 
 #[tokio::test(start_paused = true)]
+async fn bare_escape_leaves_hands_free_dictation_to_finish_but_stops_its_paste()
+-> anyhow::Result<()> {
+    let (insertion, preparing) = gate(4);
+    let mut h = Harness::with_ports(Config::default(), |ports| {
+        ports.insertion = Some(insertion);
+    })?;
+    receive(&h.loads).await?;
+    for kept in [true, false] {
+        h.input(Input::Toggle);
+        h.phase(Phase::Recording).await?;
+        receive(&h.captures).await?;
+        h.input(Input::Escape);
+        h.input(Input::Press);
+        h.input(Input::Release);
+        h.transcribe_next_as("Hands-free fixture.").await?;
+        let permit = preparing.reached().await?;
+        if kept {
+            preparing.release().await?;
+            assert_eq!(receive(&h.pasted).await?, "Hands-free fixture.");
+            h.phase(Phase::Done).await?;
+        } else {
+            h.input(Input::Escape);
+            assert!(!permit.active(), "Escape left a hands-free paste under way");
+            preparing.release().await?;
+            h.phase(Phase::Cancelled).await?;
+        }
+    }
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyhow::Result<()> {
     let (insertion, preparing) = gate(4);
     let mut h = Harness::with_ports(Config::default(), |ports| {

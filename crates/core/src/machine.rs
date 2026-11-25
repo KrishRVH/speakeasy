@@ -99,8 +99,13 @@ pub trait Env<P: Payload> {
     fn style(&mut self) -> P::Style;
 
     /// Exempts the permit from native Escape, cancel, and interrupt, so only the machine ends it,
-    /// as Shows and recoveries need. False when the permit is no longer current.
+    /// as Shows, recoveries, and hands-free recordings need. False when the permit is no longer
+    /// current.
     fn shield(&mut self, permit: &P::Permit) -> bool;
+
+    /// Returns a shielded permit to native Escape, cancel, and interrupt; nothing once it is no
+    /// longer current.
+    fn expose(&mut self, permit: &P::Permit);
 
     /// Ends the permit's authority, shielded or not.
     fn revoke(&mut self, permit: &P::Permit);
@@ -663,7 +668,11 @@ impl<P: Payload> Machine<P> {
         event: Event<P>,
         env: &mut impl Env<P>,
     ) -> ControlFlow<Halt> {
+        let hands_free = self.hands_free();
         self.handle(now, event, env)?;
+        if !hands_free {
+            self.shield_hands_free(now, env);
+        }
         self.advance(env);
         self.hold_cues(env);
         ControlFlow::Continue(())
@@ -1147,6 +1156,7 @@ impl<P: Payload> Machine<P> {
             return;
         };
         let lost = session.take_lost();
+        session.expose(env);
         let Some(text) = env.compose(heard, session.style, &self.config) else {
             let outcome = lost.map_or(Outcome::Empty, |lost| {
                 Outcome::Failed(Failure::Said(Trouble::Microphone, lost.failure))
@@ -1435,6 +1445,19 @@ impl<P: Payload> Machine<P> {
 
     fn settings(&self) -> Settings {
         P::settings(&self.config)
+    }
+
+    /// Bare Escape belongs to the focused app during a hands-free recording, so native Escape must
+    /// not revoke its permit there; the gesture decides whether an Escape cancels.
+    fn shield_hands_free(&mut self, now: Now<P>, env: &mut impl Env<P>) {
+        if self.hands_free()
+            && let Some(session) = &self.session
+            && !session.shield_hands_free(env)
+        {
+            // A native cancel revoked the permit before the recording went hands-free.
+            let cancel = self.gesture.abandon();
+            self.handle_action(now, cancel, env);
+        }
     }
 
     fn hold_cues(&mut self, env: &mut impl Env<P>) {

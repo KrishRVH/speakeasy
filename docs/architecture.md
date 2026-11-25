@@ -137,7 +137,9 @@ Tests live with their modules. Use the linked integration tests when a change cr
 - **Revoke before cleanup.** A dictation's permit is revoked synchronously on cancellation, a
   settings change the session reads, Pause, or Quit. Native insertion checks it just before
   committing. A Show shields the permit from input cancellation so the machine can decide whether to
-  keep or discard the recording. Pause, Quit, and reconfiguration still revoke publication.
+  keep or discard the recording. A hands-free recording shields it too, since bare Escape belongs to
+  the focused app, and exposes it again to deliver. Pause, Quit, and reconfiguration still revoke
+  publication.
 - **Match results to the session.** Capture, footage, and recognition results carry identity.
   Retired work stays owned until cleanup and cannot change a newer recording. A Show that already
   committed can still become the last Show unless a newer one has been saved.
