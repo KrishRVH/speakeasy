@@ -65,6 +65,12 @@ impl Editor {
             .update(cx, |field, cx| field.set_text(name.into(), cx));
     }
 
+    /// A failed save restored the list from disk, so Undo would act on a list the user no longer
+    /// sees.
+    pub(super) fn list_replaced(&mut self) {
+        self.deleted = None;
+    }
+
     pub(super) fn clear(&mut self, cx: &mut Context<'_, Settings>) {
         self.naming = false;
         self.deleted = None;

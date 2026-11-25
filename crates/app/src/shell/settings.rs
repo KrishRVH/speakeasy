@@ -774,6 +774,7 @@ impl Settings {
             self.config = restored;
             self.own_engine = false;
             self.vocabulary.list_replaced();
+            self.presets.list_replaced();
         }
         self.notice = error
             .or_else(|| applied?.err().map(|error| error.to_string()))
