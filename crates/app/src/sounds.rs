@@ -190,7 +190,7 @@ struct Output {
 impl Output {
     fn open() -> Option<Self> {
         let host = cpal::default_host();
-        let device = host.default_output_device()?;
+        let device = crate::audio::pinned(&host, host.default_output_device()?);
         let format = device.default_output_config().ok()?;
         let rate = NonZeroU32::new(format.sample_rate())?;
         let channels = NonZeroUsize::new(usize::from(format.channels()))?;

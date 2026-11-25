@@ -652,7 +652,25 @@ fn select_device(
     let device = host
         .default_input_device()
         .context("No microphone found. Connect one, then try again.")?;
-    Ok((device, source))
+    Ok((pinned(host, device), source))
+}
+
+/// The endpoint a default device names now.
+///
+/// A WASAPI default handle registers a device monitor whose callback leaves thread-pool threads in
+/// a single-threaded apartment after any endpoint change. Once the process holds a multithreaded
+/// apartment, as every Show's capture makes it, opening a default handle can fail with
+/// `RPC_E_CHANGED_MODE` until restart (RustAudio/cpal#1402). A concrete endpoint opens directly and
+/// registers no monitor; other hosts already return one, or have nothing to resolve.
+pub(crate) fn pinned(host: &cpal::Host, default: cpal::Device) -> cpal::Device {
+    if !cfg!(windows) {
+        return default;
+    }
+    default
+        .id()
+        .ok()
+        .and_then(|id| host.device_by_id(&id))
+        .unwrap_or(default)
 }
 
 fn consume_pcm(ring: &mut Consumer<f32>, pcm: &mut Pcm16, meter: &mut LevelMeter) -> bool {
