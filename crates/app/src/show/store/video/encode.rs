@@ -29,6 +29,7 @@ pub(super) struct Stats {
 }
 
 fn ffmpeg() -> PathBuf {
+    // An app opened from Finder inherits launchd's PATH, which leaves out Homebrew and MacPorts.
     #[cfg(target_os = "macos")]
     {
         let on_path = std::env::var_os("PATH").is_some_and(|paths| {

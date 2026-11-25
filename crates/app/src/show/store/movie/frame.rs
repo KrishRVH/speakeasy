@@ -112,6 +112,8 @@ impl Sample {
     }
 }
 
+/// The time the platform reader reports for a sample the container places at `at`: Media
+/// Foundation counts whole 100 ns ticks, while the macOS reader returns the container's time.
 pub(crate) fn decoder_time(at: Duration) -> Duration {
     if cfg!(target_os = "macos") {
         at

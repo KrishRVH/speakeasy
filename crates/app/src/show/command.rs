@@ -416,7 +416,7 @@ fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
         Err(error) if error.kind() == io::ErrorKind::NotFound => {},
         Err(error) => return Err(error).context("Can't read the existing Show skill"),
     }
-    // Renamed over the old copy, so a failed write never leaves half a guide.
+    // Renamed over the installed copy, so a failed write never leaves half a guide.
     let mut staged = tempfile::NamedTempFile::new_in(&directory)
         .context("Can't write into the agent's skill directory")?;
     staged.write_all(current.as_bytes())?;
