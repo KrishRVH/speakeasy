@@ -871,7 +871,7 @@ pub(super) fn globe_key() -> Option<crate::GlobeKey> {
     let value = unsafe {
         // Rereads the domain, which this process otherwise caches from its first read, so a change
         // made in System Settings since then counts.
-        let _ = CFPreferencesAppSynchronize(domain.as_concrete_TypeRef());
+        CFPreferencesAppSynchronize(domain.as_concrete_TypeRef());
         let value =
             CFPreferencesCopyAppValue(key.as_concrete_TypeRef(), domain.as_concrete_TypeRef());
         (!value.is_null()).then(|| CFType::wrap_under_create_rule(value))?
