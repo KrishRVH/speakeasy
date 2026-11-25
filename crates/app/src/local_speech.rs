@@ -500,6 +500,10 @@ fn server_command(config: &Config, port: u16) -> Command {
     // speech or garbage text.
     #[cfg(target_os = "macos")]
     command.env("GGML_METAL_TENSOR_DISABLE", "1");
+    // OBS installs an implicit Vulkan layer that loads into every Vulkan process, a Vulkan engine
+    // included, and can keep its DLL loaded there; the layer honors this opt-out.
+    #[cfg(windows)]
+    command.env("DISABLE_VULKAN_OBS_CAPTURE", "1");
     #[cfg(unix)]
     command.process_group(0);
     command
