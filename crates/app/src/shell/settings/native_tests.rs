@@ -13,7 +13,7 @@ use super::{
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, _) = crate::application::new().unwrap();
+    let (application, _) = crate::application::new()?;
     application.run(move |cx| {
         cx.spawn(async move |cx| {
             let result = async {

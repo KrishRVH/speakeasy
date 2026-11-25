@@ -17,7 +17,7 @@ mod microphones;
 #[ignore = "Opt-in owned windows; Linux requires a private X11 display. No microphone, input, or clipboard"]
 fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, presentation) = crate::application::new().unwrap();
+    let (application, presentation) = crate::application::new()?;
     application.run(move |cx| {
         cx.set_global(presentation);
         cx.spawn(async move |cx| {

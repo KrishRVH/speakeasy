@@ -45,7 +45,7 @@ impl Render for Fixture {
 #[ignore = "Opt-in static owned window; scripts/check-demo-windows.ps1 -StaticAccessibility drives its UIA provider"]
 fn native_accessibility_static_fixture() -> anyhow::Result<()> {
     let (completed, outcome) = std::sync::mpsc::channel();
-    let (application, _) = crate::application::new().unwrap();
+    let (application, _) = crate::application::new()?;
     application.run(move |cx| {
         cx.open_window(
             WindowOptions {

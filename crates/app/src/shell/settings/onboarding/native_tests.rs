@@ -23,17 +23,17 @@ use crate::{
     clippy::future_not_send,
     reason = "Native acceptance waits on GPUI's UI-thread executor"
 )]
-async fn failed_check(cx: &AsyncApp) -> anyhow::Result<bool> {
+async fn failed_check(cx: &AsyncApp) -> bool {
     let began = Instant::now();
     while began.elapsed() < Duration::from_secs(5) {
         if cx.update(|cx| cx.global::<Services>().output.borrow().phase == Phase::Error) {
-            return Ok(true);
+            return true;
         }
         cx.background_executor()
             .timer(Duration::from_millis(10))
             .await;
     }
-    Ok(false)
+    false
 }
 
 #[expect(
@@ -70,7 +70,7 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         cx.update_global::<Services, _>(|services, cx| services.resume(cx));
         (original, before)
     })?;
-    let resumed = failed_check(cx).await?;
+    let resumed = failed_check(cx).await;
     let unready = settings.update(cx, |view, _, cx| {
         let unready = !cx.global::<Services>().speech_checked
             && view.onboarding_next(Step::Prepare, cx) == Step::Prepare;
@@ -80,7 +80,7 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
         view.adopt_setup(cx);
         unready
     })?;
-    let rechecked = failed_check(cx).await?;
+    let rechecked = failed_check(cx).await;
     settings.update(cx, |view, _, cx| {
         let path = cx.global::<Services>().path.clone();
         let services = cx.global_mut::<Services>();
