@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 const CLI: &str = env!("CARGO_BIN_EXE_speakeasy-cli");
 const APP: &str = env!("CARGO_BIN_EXE_speakeasy");
 
+/// A `cp` child writes the copy: a write descriptor held by this threaded test process could
+/// leak into another test's spawned child and make executing the copy fail with "Text file busy".
 fn isolated_cli(root: &Path) -> anyhow::Result<PathBuf> {
     let name = Path::new(CLI)
         .file_name()
