@@ -20,13 +20,8 @@ async fn checkpoint(parent: &Path) -> anyhow::Result<Checkpoint> {
         width: 80.0,
         height: 60.0,
     };
-    let (checkpoint, mut writer) = crate::show::Keeper::fixture(
-        parent,
-        SystemTime::now(),
-        1 << 20,
-        surface,
-        Framing::Automatic,
-    )?;
+    let (checkpoint, mut writer) =
+        crate::show::Keeper::fixture(parent, 1 << 20, surface, Framing::Automatic)?;
     let mut take = Take::new(1 << 20, surface, Framing::Automatic);
     assert!(
         writer.send(take.arrive(Moment::from_millis(100), || Some(desktop(
@@ -48,8 +43,7 @@ async fn clicked_checkpoint(parent: &Path, framing: Framing) -> anyhow::Result<C
         height: height as f32,
     };
     let budget = speakeasy_show::log::MAX_BUDGET;
-    let (checkpoint, mut writer) =
-        crate::show::Keeper::fixture(parent, SystemTime::now(), budget, surface, framing)?;
+    let (checkpoint, mut writer) = crate::show::Keeper::fixture(parent, budget, surface, framing)?;
     let mut take = Take::new(budget, surface, framing);
     let frame = |at: u64| Some(desktop(width, height, 0, 0, at > 1_000));
     assert!(writer.send(take.arrive(Moment::START, || frame(0))?));

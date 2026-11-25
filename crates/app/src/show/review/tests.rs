@@ -12,7 +12,7 @@ mod narration;
 mod navigation;
 mod source;
 
-fn source_bytes(duration: Moment) -> anyhow::Result<Vec<u8>> {
+fn source_bytes() -> anyhow::Result<Vec<u8>> {
     let mut journal = Journal::default();
     journal
         .admit()
@@ -22,7 +22,7 @@ fn source_bytes(duration: Moment) -> anyhow::Result<Vec<u8>> {
             Image::from_bgra(2, 2, [40, 50, 60, 255].repeat(4))?,
         );
     let mut bytes = Vec::new();
-    journal.write_source::<SourceError>(duration, |chunk| {
+    journal.write_source::<SourceError>(Moment::from_millis(1_000), |chunk| {
         bytes.extend_from_slice(chunk);
         Ok(())
     })?;

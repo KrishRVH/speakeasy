@@ -7,10 +7,7 @@ fn retained_frames_add_a_mode_without_losing_keyframes_or_edits() -> anyhow::Res
     let path = &rows[0].directory;
     let before = Detail::open(path, Mode::Keyframes)?;
     fs::write(path.join("summary.md"), "Edited summary")?;
-    fs::write(
-        path.join("source.frames"),
-        source_bytes(Moment::from_millis(1_000))?,
-    )?;
+    fs::write(path.join("source.frames"), source_bytes()?)?;
     let source = Detail::open(path, Mode::Source)?;
     assert!(source.source_available);
     assert_eq!(source.frames.len(), 1);

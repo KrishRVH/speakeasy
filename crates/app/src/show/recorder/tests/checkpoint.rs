@@ -42,7 +42,6 @@ async fn a_recorded_take_replays_from_its_checkpoint() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let (keeper, log) = Keeper::fixture(
         root.path(),
-        SystemTime::now(),
         JOURNAL_BUDGET,
         Size {
             width: 1_000.0,

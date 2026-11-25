@@ -198,7 +198,7 @@ fn video(span: Range<Duration>) -> preview::Content {
 }
 
 fn retained() -> anyhow::Result<preview::Content> {
-    let bytes = super::source_bytes(Moment::from_millis(1_000))?;
+    let bytes = super::source_bytes()?;
     let index = speakeasy_show::Source::read(u64::try_from(bytes.len())?, |range| {
         let range = usize::try_from(range.start)?..usize::try_from(range.end)?;
         bytes

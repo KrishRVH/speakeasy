@@ -36,7 +36,6 @@ impl Keeper {
     #[cfg(test)]
     pub(crate) fn fixture(
         parent: &Path,
-        recorded: SystemTime,
         budget: usize,
         surface: Size,
         framing: Framing,
@@ -44,7 +43,7 @@ impl Keeper {
         let parent = parent.to_owned();
         let Kept {
             keeper, mut frames, ..
-        } = Self::start(move || Ok(parent), recorded)?;
+        } = Self::start(move || Ok(parent), SystemTime::now())?;
         anyhow::ensure!(
             frames.begin(budget, surface, framing),
             "Synthetic frame log did not begin"

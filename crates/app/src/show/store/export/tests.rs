@@ -95,9 +95,7 @@ fn archive_moves_with_edited_summary_images_and_retained_samples_but_no_extra_fi
     let guide = fs::read_to_string(extracted.join(GUIDE))?;
     assert!(guide.contains("[Frame 1 at 500 ms](frames/frame-01.png)"));
     assert!(guide.contains("speakeasy show frames . --json"));
-    assert!(
-        !guide.contains("PRIVATE_") && !guide.contains(&directory.to_string_lossy().to_string())
-    );
+    assert!(!guide.contains("PRIVATE_") && !guide.contains(&*directory.to_string_lossy()));
     Ok(())
 }
 
@@ -124,7 +122,7 @@ fn movie_exports_preserve_video_timing_and_relative_playback_links() -> anyhow::
     archive.by_name(GUIDE)?.read_to_string(&mut guide)?;
     assert!(guide.contains("[recording.mp4](recording.mp4)"));
     assert!(guide.contains("250–1250 ms") && guide.contains("through 1000 ms"));
-    assert!(!guide.contains(&directory.to_string_lossy().to_string()));
+    assert!(!guide.contains(&*directory.to_string_lossy()));
     fs::remove_file(directory.join(movie::FILE))?;
     let failed = root.path().join("missing-video.zip");
     assert!(write(&directory, &failed).is_err());

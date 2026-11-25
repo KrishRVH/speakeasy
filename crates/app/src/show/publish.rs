@@ -75,14 +75,8 @@ pub(crate) async fn publish(
     wsl: Lookup,
 ) -> anyhow::Result<Published> {
     let Publication { footage, origin } = publication;
-    let origin = match origin.close().await {
-        Ok(origin) => origin,
-        Err(_) if !permit.active() => return Ok(Published::Cancelled),
-        Err(error) => {
-            return Err(error.context(
-                "The Show couldn't be saved because its checkpoint failed. Check Shows for recoverable footage.",
-            ));
-        },
+    let Some(origin) = settle(origin, &permit).await? else {
+        return Ok(Published::Cancelled);
     };
     tokio::task::spawn_blocking(move || {
         let command = crate::paths::command();
@@ -100,6 +94,21 @@ pub(crate) async fn publish(
     })
     .await
     .unwrap_or_else(|_panicked| Err(anyhow!(PUBLISH_STOPPED)))
+}
+
+/// Waits for the checkpoint's files; `None` means the Show was cancelled, which excuses a failed
+/// checkpoint.
+async fn settle(
+    origin: Origin<Checkpointing>,
+    permit: &InsertPermit,
+) -> anyhow::Result<Option<Origin<Checkpoint>>> {
+    match origin.close().await {
+        Ok(origin) => Ok(Some(origin)),
+        Err(_) if !permit.active() => Ok(None),
+        Err(error) => Err(error.context(
+            "The Show couldn't be saved because its checkpoint failed. Check Shows for recoverable footage.",
+        )),
+    }
 }
 
 fn publish_with(

@@ -9,14 +9,9 @@ fn surface() -> Size {
     }
 }
 
-async fn capture(parent: &Path, at: SystemTime) -> anyhow::Result<Checkpoint> {
-    let (checkpoint, mut writer) = Keeper::fixture(
-        parent,
-        at,
-        1_000,
-        surface(),
-        speakeasy_show::Framing::Automatic,
-    )?;
+async fn capture(parent: &Path) -> anyhow::Result<Checkpoint> {
+    let (checkpoint, mut writer) =
+        Keeper::fixture(parent, 1_000, surface(), speakeasy_show::Framing::Automatic)?;
     let mut take = Take::new(1_000, surface(), speakeasy_show::Framing::Automatic);
     let event = take.arrive(Moment::from_millis(100), || {
         Some(Image::from_bgra(2, 2, [3, 2, 1, 255].repeat(4)).unwrap())
@@ -38,7 +33,7 @@ async fn only_unlocked_interrupted_shows_are_listed_and_discard_removes_them() -
 {
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
+    let checkpoint = capture(root.path()).await?;
     assert_eq!(list(root.path(), now), []);
     let path = checkpoint.directory.clone();
     assert!(checkpoint.replay()?.ended());
@@ -57,7 +52,7 @@ async fn only_unlocked_interrupted_shows_are_listed_and_discard_removes_them() -
 async fn a_torn_end_recovers_a_prefix_and_expiry_uses_the_original_stamp() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
+    let checkpoint = capture(root.path()).await?;
     {
         let file = OpenOptions::new()
             .write(true)
@@ -81,7 +76,7 @@ async fn a_torn_end_recovers_a_prefix_and_expiry_uses_the_original_stamp() -> an
 async fn discard_finds_an_interrupted_show_by_its_id_or_path_only() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let now = SystemTime::now();
-    let checkpoint = capture(root.path(), now).await?;
+    let checkpoint = capture(root.path()).await?;
     let path = checkpoint.directory.clone();
     drop(checkpoint);
     let interrupted = list(root.path(), now).remove(0);

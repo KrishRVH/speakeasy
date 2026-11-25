@@ -206,8 +206,8 @@ fn png_size(bytes: &[u8]) -> (u32, u32) {
 }
 
 #[tokio::test]
-async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation()
--> anyhow::Result<()> {
+async fn unknown_checkpoint_state_stops_publication_and_respects_cancellation() -> anyhow::Result<()>
+{
     for cancelled in [false, true] {
         let crate::show::Kept {
             keeper,
@@ -223,21 +223,17 @@ async fn unknown_checkpoint_state_precedes_composition_and_respects_cancellation
         if cancelled {
             input.cancel();
         }
-        let result = publish(
-            Publication {
-                footage: Rehearsal::new(80, 60).finish(500),
-                origin: Origin::Live {
-                    checkpoint: Some(crate::show::Checkpointing::Writing(keeper)),
-                },
+        let settled = settle(
+            Origin::Live {
+                checkpoint: Some(crate::show::Checkpointing::Writing(keeper)),
             },
-            permit,
-            Lookup::spawn(|| None, crate::testing::PATIENCE),
+            &permit,
         )
         .await;
         if cancelled {
-            assert!(matches!(result, Ok(Published::Cancelled)));
+            assert!(matches!(settled, Ok(None)));
         } else {
-            let error = result.err().context("Checkpoint failure was ignored")?;
+            let error = settled.err().context("Checkpoint failure was ignored")?;
             assert_eq!(
                 error.to_string(),
                 "The Show couldn't be saved because its checkpoint failed. Check Shows for recoverable footage."
@@ -575,7 +571,6 @@ fn profile_show_pipeline() -> anyhow::Result<()> {
         };
         let (checkpoint, mut writer) = crate::show::Keeper::fixture(
             root.path(),
-            SystemTime::now(),
             speakeasy_show::log::MAX_BUDGET,
             surface,
             Framing::Automatic,
