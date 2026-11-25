@@ -154,8 +154,8 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   never another key. With a lone modifier other than Fn, a hold key pressed within 250 ms of it
   interrupts and reaches the app, so Right Ctrl+C still copies; pressed when another modifier is
   already down, the modifier does not dictate. Adding Space during the hold, or double-tapping,
-  switches to hands-free; press the shortcut again to finish. A short single tap finishes after its
-  tap window.
+  switches to hands-free; press the shortcut again and release it to finish. A short single tap
+  finishes after its tap window.
 - Linux holds Ctrl+Super+Space or double-taps it for hands-free; its accepted binding is shown in
   Settings. Desktop command bindings start/finish hands-free.
 - Settings can record optional shortcuts for hands-free and for screen, window, and area Shows. Each
@@ -185,8 +185,8 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   released. If a check fails, or the Return press is blocked or fails, the text stays and the pill
   says Return wasn't pressed, without offering a second paste. A sent paste keeps the dictation on
   the clipboard rather than restoring the earlier copy. Like the other hold keys, Return is withheld
-  whenever the shortcut is down, so on the finishing press of hands-free or a Show it does nothing;
-  in practice it finishes the hold without sending. Return with the shortcut up reaches the app.
+  whenever the shortcut is down, so it also finishes and sends from the finishing press of
+  hands-free dictation, and does nothing on a Show's. Return with the shortcut up reaches the app.
 - During a Windows/macOS hold, S, W, or A turns the recording into a Show, hands-free and keeping
   the narration since the press; pressing the shortcut again finishes it on release. The pill table
   shows what the pill presents. S records the display under the pointer and W the window under it,
@@ -205,16 +205,18 @@ selection clears it. Use the [Show guide](../README.md#read-saved-shows) for rev
   modifier was held; no pin lands off the recorded window or area. Marks and pins share one
   numbering in the order they began, ① ② ③; each number sits beside what it numbers on the overlay,
   fading with the ink, and in the bundle's keyframes and summary.
-- Windows/macOS Escape continues to the focused app. It cancels dictation immediately at any stage,
-  but a Show, area choice included, only while the shortcut is held: during the hold that started it
-  or the press that would finish it. Otherwise a recording Show ignores Escape, and the tray's
-  Cancel Show discards it. An interruption, which is another shortcut or a session change such as
-  locking the screen, discards dictation but finishes a recording Show as the shortcut would. Once a
-  Show finishes, neither Escape, the tray, nor an interruption discards it while it is saved. Pause,
-  Quit, and a settings change can stop pending work, but preserve the finished Show's checkpoint for
-  recovery. A committed Show stays saved. Linux uses a reserved Ctrl+Super+Escape chord or an
-  explicit command binding; bare Escape is not globally captured. Animation never delays
-  cancellation or owns the microphone lifetime.
+- Windows/macOS Escape continues to the focused app, so an Escape meant for that app must not
+  discard a recording the user is no longer holding. It cancels hold-to-talk dictation immediately
+  at any stage, but a hands-free recording, dictation or Show, area choice included, only while the
+  shortcut is held: during the hold that started it or the press that would finish it. Otherwise a
+  hands-free recording ignores Escape, and the tray's Cancel dictation or Cancel Show discards it;
+  dictation that has finished recording cancels with Escape alone. An interruption, which is another
+  shortcut or a session change such as locking the screen, discards dictation but finishes a
+  recording Show as the shortcut would. Once a Show finishes, neither Escape, the tray, nor an
+  interruption discards it while it is saved. Pause, Quit, and a settings change can stop pending
+  work, but preserve the finished Show's checkpoint for recovery. A committed Show stays saved.
+  Linux uses a reserved Ctrl+Super+Escape chord or an explicit command binding; bare Escape is not
+  globally captured. Animation never delays cancellation or owns the microphone lifetime.
 - On macOS, Secure Keyboard Entry leaves modifier events visible. The pill checks once as the
   microphone opens and, under the slot, names the app macOS reports as holding it. Notes under the
   slot never hide the grille, lock, timer, or countdown; each gets its full time in turn.

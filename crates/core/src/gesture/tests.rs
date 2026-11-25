@@ -89,6 +89,7 @@ fn capture_start(gesture: &Gesture) -> Option<Moment> {
         Phase::Held { started }
         | Phase::PendingTap { started, .. }
         | Phase::HandsFree { started }
+        | Phase::HandsFreeArmed { started }
         | Phase::Show { started }
         | Phase::ShowArmed { started } => Some(started),
         Phase::Idle | Phase::Processing | Phase::Saving => None,
@@ -160,7 +161,7 @@ fn single_tap_finishes_but_double_tap_keeps_the_original_capture() {
 }
 
 #[test]
-fn locking_a_hold_keeps_its_capture_until_the_next_press() {
+fn locking_a_hold_keeps_its_capture_until_the_release_after_a_fresh_press() {
     let start = Moment::default();
     let mut gesture = Gesture::default();
     assert_eq!(gesture.press(start), Some(Action::Start));
@@ -168,7 +169,15 @@ fn locking_a_hold_keeps_its_capture_until_the_next_press() {
     assert_eq!(gesture.release(start.after(seconds(1))), None);
     assert_eq!(gesture.phase, Phase::HandsFree { started: start });
     gesture.lock();
-    assert_eq!(gesture.press(start.after(seconds(2))), Some(Action::Finish));
+    assert_eq!(
+        gesture.press(start.after(seconds(2))),
+        None,
+        "The press finished hands-free before Escape could cancel it"
+    );
+    assert_eq!(
+        gesture.release(start.after(seconds(3))),
+        Some(Action::Finish)
+    );
 }
 
 #[test]
@@ -244,33 +253,56 @@ fn a_show_finishes_on_the_release_after_a_fresh_press() {
 }
 
 #[test]
-fn escape_cancels_a_show_only_while_the_shortcut_is_held() {
+fn escape_cancels_a_hands_free_recording_only_while_the_shortcut_is_held() {
+    type HandsFree = fn(&mut Gesture);
+    let start = Moment::default();
+    let kinds: [(&str, HandsFree); 2] = [("Dictation", Gesture::lock), ("Show", Gesture::show)];
+    for (kind, hands_free) in kinds {
+        let mut gesture = Gesture::default();
+        gesture.press(start);
+        hands_free(&mut gesture);
+        assert_eq!(
+            gesture.escape(),
+            Some(Action::Cancel),
+            "{kind}: Escape during the opening hold"
+        );
+        gesture.release(start);
+        gesture.press(start);
+        hands_free(&mut gesture);
+        gesture.release(start);
+        assert_eq!(
+            gesture.escape(),
+            None,
+            "{kind}: Escape alone cancelled a hands-free recording"
+        );
+        gesture.press(start);
+        assert_eq!(
+            gesture.escape(),
+            Some(Action::Cancel),
+            "{kind}: Escape during the finishing press"
+        );
+        assert_eq!(
+            gesture.release(start),
+            None,
+            "{kind}: a cancelled recording finished"
+        );
+        assert_eq!(gesture.state(), State::Idle);
+    }
+}
+
+#[test]
+fn a_show_named_during_the_finishing_press_keeps_recording_past_its_release() {
     let start = Moment::default();
     let mut gesture = Gesture::default();
+    gesture.toggle(start);
     gesture.press(start);
     gesture.show();
     assert_eq!(
-        gesture.escape(),
-        Some(Action::Cancel),
-        "Escape during the opening hold"
-    );
-    gesture.release(start);
-    gesture.press(start);
-    gesture.show();
-    gesture.release(start);
-    assert_eq!(
-        gesture.escape(),
+        gesture.release(start),
         None,
-        "Escape alone cancelled a hands-free Show"
+        "The release finished the Show it just started"
     );
-    gesture.press(start);
-    assert_eq!(
-        gesture.escape(),
-        Some(Action::Cancel),
-        "Escape during the finishing press"
-    );
-    assert_eq!(gesture.release(start), None, "A cancelled Show finished");
-    assert_eq!(gesture.state(), State::Idle);
+    assert_eq!(gesture.phase, Phase::Show { started: start });
 }
 
 #[test]
@@ -335,11 +367,13 @@ fn escape_cancel_and_interruptions_discard_dictation_recording_or_processing() {
     ];
     for (name, discard) in discards {
         assert_eq!(gesture.toggle(start), Some(Action::Start));
+        gesture.press(start);
         assert_eq!(
             discard(&mut gesture),
             Some(Action::Cancel),
-            "{name} while hands-free"
+            "{name} during the press that would finish hands-free"
         );
+        gesture.release(start);
         assert_eq!(gesture.toggle(start), Some(Action::Start));
         assert_eq!(gesture.toggle(start), Some(Action::Finish));
         assert_eq!(

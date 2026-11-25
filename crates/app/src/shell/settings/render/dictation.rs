@@ -182,7 +182,13 @@ impl Settings {
                         .items_center()
                         .gap(px(6.0))
                         .child(kit.keys(&self.cancel_shortcut(), false))
-                        .child("while talking")
+                        // Passive Escape reaches the focused app, so hands-free cancels with it
+                        // only while the shortcut is held; Linux's reserved chord cancels any time.
+                        .child(if cfg!(target_os = "linux") {
+                            "while talking"
+                        } else {
+                            "while holding"
+                        })
                 },
             ));
         // Linux shortcuts arrive as portal activations, so no key reaches Speakeasy during a hold.

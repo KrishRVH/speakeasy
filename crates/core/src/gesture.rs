@@ -121,11 +121,21 @@ impl Gesture {
             Phase::Idle => State::Idle,
             Phase::Held { .. } => State::Held,
             Phase::PendingTap { .. } => State::PendingTap,
-            Phase::HandsFree { .. } | Phase::Show { .. } | Phase::ShowArmed { .. } => {
-                State::HandsFree
-            },
+            Phase::HandsFree { .. }
+            | Phase::HandsFreeArmed { .. }
+            | Phase::Show { .. }
+            | Phase::ShowArmed { .. } => State::HandsFree,
             Phase::Processing | Phase::Saving => State::Processing,
         }
+    }
+
+    /// Whether the shortcut is down again in a hands-free recording, whose release finishes it.
+    #[must_use]
+    pub(crate) const fn finishing(&self) -> bool {
+        matches!(
+            self.phase,
+            Phase::HandsFreeArmed { .. } | Phase::ShowArmed { .. }
+        )
     }
 
     pub(crate) fn press(&mut self, now: Moment) -> Option<Action> {
@@ -143,14 +153,19 @@ impl Gesture {
                 self.phase = Phase::HandsFree { started };
                 None
             },
-            Phase::HandsFree { .. } => self.finish(),
+            Phase::HandsFree { started } => {
+                self.phase = Phase::HandsFreeArmed { started };
+                None
+            },
             Phase::Show { started } => {
                 self.phase = Phase::ShowArmed { started };
                 None
             },
-            Phase::Held { .. } | Phase::ShowArmed { .. } | Phase::Processing | Phase::Saving => {
-                None
-            },
+            Phase::Held { .. }
+            | Phase::HandsFreeArmed { .. }
+            | Phase::ShowArmed { .. }
+            | Phase::Processing
+            | Phase::Saving => None,
         }
     }
 
@@ -165,7 +180,9 @@ impl Gesture {
                 };
                 None
             },
-            Phase::Held { .. } | Phase::ShowArmed { .. } => self.finish(),
+            Phase::Held { .. } | Phase::HandsFreeArmed { .. } | Phase::ShowArmed { .. } => {
+                self.finish()
+            },
             Phase::Idle
             | Phase::PendingTap { .. }
             | Phase::HandsFree { .. }
@@ -176,7 +193,10 @@ impl Gesture {
     }
 
     pub(crate) fn submit(&mut self) -> Option<Action> {
-        if matches!(self.phase, Phase::Held { .. }) {
+        if matches!(
+            self.phase,
+            Phase::Held { .. } | Phase::HandsFreeArmed { .. }
+        ) {
             self.finish()
         } else {
             None
@@ -193,7 +213,8 @@ impl Gesture {
     pub(crate) fn show(&mut self) {
         if let Phase::Held { started }
         | Phase::PendingTap { started, .. }
-        | Phase::HandsFree { started } = self.phase
+        | Phase::HandsFree { started }
+        | Phase::HandsFreeArmed { started } = self.phase
         {
             self.phase = Phase::Show { started };
         }
@@ -212,7 +233,10 @@ impl Gesture {
                 self.phase = Phase::HandsFree { started };
                 None
             },
-            Phase::HandsFree { .. } | Phase::Show { .. } | Phase::ShowArmed { .. } => self.finish(),
+            Phase::HandsFree { .. }
+            | Phase::HandsFreeArmed { .. }
+            | Phase::Show { .. }
+            | Phase::ShowArmed { .. } => self.finish(),
             Phase::Processing | Phase::Saving => None,
         }
     }
@@ -223,6 +247,7 @@ impl Gesture {
             Phase::Idle | Phase::Processing | Phase::Saving => None,
             Phase::Held { started }
             | Phase::HandsFree { started }
+            | Phase::HandsFreeArmed { started }
             | Phase::Show { started }
             | Phase::ShowArmed { started } => Some(started.after(self.timing.limit)),
             Phase::PendingTap { started, released } => Some(
@@ -244,18 +269,28 @@ impl Gesture {
     pub(crate) fn finish(&mut self) -> Option<Action> {
         self.phase = match self.phase {
             Phase::Idle | Phase::Processing | Phase::Saving => return None,
-            Phase::Held { .. } | Phase::PendingTap { .. } | Phase::HandsFree { .. } => {
-                Phase::Processing
-            },
+            Phase::Held { .. }
+            | Phase::PendingTap { .. }
+            | Phase::HandsFree { .. }
+            | Phase::HandsFreeArmed { .. } => Phase::Processing,
             Phase::Show { .. } | Phase::ShowArmed { .. } => Phase::Saving,
         };
         Some(Action::Finish)
     }
 
-    /// Escape also reaches the focused app, so it cancels a Show only while the shortcut is held.
+    /// Escape also reaches the focused app, so it cancels a hands-free recording, dictation or
+    /// Show, only while the shortcut is held: during the hold that started it or the press that
+    /// would finish it.
     pub(crate) fn escape(&mut self) -> Option<Action> {
         match self.phase {
-            Phase::Show { .. } | Phase::ShowArmed { .. } if !self.down => None,
+            Phase::HandsFree { .. }
+            | Phase::HandsFreeArmed { .. }
+            | Phase::Show { .. }
+            | Phase::ShowArmed { .. }
+                if !self.down =>
+            {
+                None
+            },
             _ => self.cancel(),
         }
     }
@@ -303,6 +338,10 @@ enum Phase {
         released: Moment,
     },
     HandsFree {
+        started: Moment,
+    },
+    /// A hands-free dictation whose shortcut is down again; the release finishes it.
+    HandsFreeArmed {
         started: Moment,
     },
     Show {

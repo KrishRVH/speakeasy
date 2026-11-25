@@ -50,6 +50,29 @@ async fn paste_during_a_hold_discards_its_audio_before_replaying() -> anyhow::Re
 }
 
 #[tokio::test(start_paused = true)]
+async fn paste_on_the_press_that_finishes_hands_free_keeps_that_dictation() -> anyhow::Result<()> {
+    let mut h = Harness::new()?;
+    h.start().await?;
+    h.finish_as("Kept fixture.").await?;
+    assert_eq!(receive(&h.pasted).await?, "Kept fixture.");
+    h.phase(Phase::Done).await?;
+    h.input(Input::Toggle);
+    h.phase(Phase::Recording).await?;
+    receive(&h.captures).await?;
+    h.input(Input::Press);
+    h.input(Input::PasteLast);
+    h.input(Input::Release);
+    h.transcribe_next_as("Hands-free fixture.").await?;
+    assert_eq!(
+        receive(&h.pasted).await?,
+        "Hands-free fixture.",
+        "Paste last discarded the hands-free dictation it was finishing"
+    );
+    h.phase(Phase::Done).await?;
+    h.close().await
+}
+
+#[tokio::test(start_paused = true)]
 async fn cancelled_text_never_replaces_recall_and_settings_preserve_it() -> anyhow::Result<()> {
     let (insertion, preparing) = gate(4);
     let mut h = Harness::with_ports(Config::default(), |ports| {

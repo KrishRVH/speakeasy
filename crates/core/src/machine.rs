@@ -1379,7 +1379,9 @@ impl<P: Payload> Machine<P> {
             }
             return;
         }
+        // V on the press that finishes hands-free leaves that dictation to finish on release.
         if matches!(self.gesture.state(), State::Held | State::HandsFree)
+            && !self.gesture.finishing()
             && self.session.as_ref().is_some_and(Session::is_dictation)
         {
             self.abandon(env);

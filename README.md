@@ -42,20 +42,21 @@ finish practice and dictate into an editor.
 
 ## Everyday use
 
-| Gesture                                 | Windows                             | macOS                               | Linux                          |
-| --------------------------------------- | ----------------------------------- | ----------------------------------- | ------------------------------ |
-| Hold to dictate, release to finish      | Ctrl+Win                            | Fn                                  | Ctrl+Super+Space               |
-| Start hands-free, press again to finish | Double-tap or add Space during hold | Double-tap or add Space during hold | Double-tap                     |
-| Cancel                                  | Escape                              | Escape                              | Ctrl+Super+Escape              |
-| Finish and send with Return             | Enter during hold                   | Return during hold                  |                                |
-| Paste last dictation                    | V during hold or tray               | V during hold or tray               | Tray or `speakeasy paste-last` |
-| Show the screen, window, or area        | S, W, or A during hold              | S, W, or A during hold              |                                |
-| One-press hands-free or Show            | Record a shortcut in Settings       | Record a shortcut in Settings       |                                |
+| Gesture                               | Windows                             | macOS                               | Linux                          |
+| ------------------------------------- | ----------------------------------- | ----------------------------------- | ------------------------------ |
+| Hold to dictate, release to finish    | Ctrl+Win                            | Fn                                  | Ctrl+Super+Space               |
+| Start hands-free, tap again to finish | Double-tap or add Space during hold | Double-tap or add Space during hold | Double-tap                     |
+| Cancel                                | Escape                              | Escape                              | Ctrl+Super+Escape              |
+| Finish and send with Return           | Enter during hold                   | Return during hold                  |                                |
+| Paste last dictation                  | V during hold or tray               | V during hold or tray               | Tray or `speakeasy paste-last` |
+| Show the screen, window, or area      | S, W, or A during hold              | S, W, or A during hold              |                                |
+| One-press hands-free or Show          | Record a shortcut in Settings       | Record a shortcut in Settings       |                                |
 
-Escape still reaches the focused app on Windows and macOS. The pill listens without taking focus,
-shows progress and errors, and counts down the last 30 seconds of the five-minute limit. If the
-microphone drops out after speech, use **Paste last dictation** to recover the words Speakeasy
-heard. It keeps one result in memory until Pause, a dictation restart, or Quit.
+Escape still reaches the focused app on Windows and macOS, so hands-free dictation cancels only
+while you hold the shortcut, or from the tray. The pill listens without taking focus, shows progress
+and errors, and counts down the last 30 seconds of the five-minute limit. If the microphone drops
+out after speech, use **Paste last dictation** to recover the words Speakeasy heard. It keeps one
+result in memory until Pause, a dictation restart, or Quit.
 
 <p align="center">
   <img src="docs/assets/pill-states.png"

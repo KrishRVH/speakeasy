@@ -398,10 +398,20 @@ impl Settings {
         } else {
             vec![
                 line(kit.keys(&self.shortcut(), false), "Hold to talk"),
+                line(div().child("Double-tap"), "Hands-free; tap again to finish"),
+                // Escape cancels only while the shortcut is down, which a hold already is.
+                #[cfg(not(target_os = "linux"))]
                 line(
-                    div().child("Double-tap"),
-                    "Hands-free; press again to finish",
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap(px(6.0))
+                        .child(kit.keys(&self.shortcut(), false))
+                        .child("+")
+                        .child(kit.keys(&self.cancel_shortcut(), false)),
+                    "Cancel without typing",
                 ),
+                #[cfg(target_os = "linux")]
                 line(
                     kit.keys(&self.cancel_shortcut(), false),
                     "Cancel without typing",
