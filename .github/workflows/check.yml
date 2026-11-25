@@ -185,7 +185,7 @@ jobs:
         run: |
           export SPEAKEASY_MAC_MOVIE_DIRECTORY="$PWD/artifacts/mac-movie"
           mise run macos:movie:encode
-          cargo test --locked -p speakeasy-platform macos::screen::stream:: -- --nocapture --test-threads=1
+          mise run macos:stream
       - name: Check owned Mac screen capture
         if: ${{ inputs.screen }}
         timeout-minutes: 2

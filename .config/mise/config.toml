@@ -379,6 +379,10 @@ run = [
 description = "Check the colors of the synthetic Windows clips in SPEAKEASY_WINDOWS_MOVIE_DIRECTORY"
 run = "cargo test --locked -p speakeasy-platform native_windows_movie_preserves_colors_on_macos -- --ignored --nocapture --test-threads=1"
 
+[tasks."macos:stream"]
+description = "Check macOS screen stream starts, stops, and frame timing with their output shown"
+run = "cargo test --locked -p speakeasy-platform macos::screen::stream:: -- --nocapture --test-threads=1"
+
 [tasks."macos:capture"]
 description = "Capture owned synthetic windows from the screen into memory; needs Screen Recording permission"
 run = "cargo run --locked -p speakeasy-platform --example mac_capture -- --owned-screen"
