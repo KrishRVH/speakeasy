@@ -39,9 +39,9 @@ Linux: it fails when GPUI's frame pacing throttles the pill.
   or defers to, its `App::quit`. The Mac quit acceptance in CI (`mac_updates`) covers it.
 - `src/window.rs` and `src/platform.rs` add `Window::set_window_visible` and its platform hook,
   which hides a window without closing it. X11 and Wayland implement it, and Speakeasy shows and
-  hides every Linux window through it. Upstream has no way to hide a Wayland window, so closing
-  Settings to the tray dropped its view and stopped its downloads, and the idle layer-shell pill
-  stayed mapped. `idle_native_pill_starts_unmapped_and_can_show_and_hide` covers X11; the Settings
+  hides every Linux window through it. Upstream has no way to hide a Wayland window, so without it
+  closing Settings to the tray drops its view and stops its downloads, and the idle layer-shell pill
+  stays mapped. `idle_native_pill_starts_unmapped_and_can_show_and_hide` covers X11; the Settings
   close, idle pill, and reopening rows of
   [Linux native acceptance](../docs/linux-implementation.md#native-acceptance-still-required) cover
   Wayland.
@@ -98,8 +98,8 @@ Linux: it fails when GPUI's frame pacing throttles the pill.
   dialogs, and popups open shown and ignore it. Check it on sway with two outputs: the
   `--demo-tray` pill shows its tray hint on the output focused when Settings closes, and under
   `WAYLAND_DEBUG=client` hiding and showing Settings while it resizes logs configures for the old
-  role as discarded and never ends the connection. Keeping the layer surface left the hint on the
-  output where the pill first showed, and acknowledging such a configure ended the connection with
+  role as discarded and never ends the connection. Keeping the layer surface leaves the hint on the
+  output where the pill first showed, and acknowledging such a configure ends the connection with
   `wrong configure serial`.
 
 ## gpui-pre-windows
