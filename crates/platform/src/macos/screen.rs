@@ -278,6 +278,7 @@ pub(crate) fn capture(
     movie: Option<crate::MovieTarget>,
 ) {
     if matches!(target.region, Region::Window(..)) {
+        // A window Show records stills only, so the movie lease ends at once.
         drop(movie);
         capture_stills_owned(target, interval, longest_edge, events, stopping);
     } else if let Err(failure) =

@@ -12,6 +12,7 @@ use windows_sys::Win32::{
 use super::to_wide;
 use crate::awake::Keep;
 
+/// `POWER_REQUEST_CONTEXT_VERSION`, copied to spare enabling windows-sys's large `SystemServices`.
 const CONTEXT_VERSION: u32 = 0;
 
 pub(crate) struct Awake {
