@@ -15,6 +15,10 @@ const CREDITS: &[&str] = &[
     "İzlediğiniz için teşekkür ederim.",
     "Altyazı M.K.",
     "Altyazı M.",
+    "Продолжение следует...",
+    "Субтитры сделал DimaTorzok",
+    "Субтитры делал DimaTorzok",
+    "Редактор субтитров А.Семкин Корректор А.Егорова",
     "ご視聴ありがとうございました",
     "시청해주셔서 감사합니다.",
     "字幕由Amara.org社区提供",
@@ -68,6 +72,7 @@ mod tests {
             "IZLEDIĞINIZ İÇİN TEŞEKKÜR EDERİM",
             "I\u{307}zlediğiniz için teşekkür ederim",
             "ご視聴ありがとうございました。",
+            "ПРОДОЛЖЕНИЕ СЛЕДУЕТ",
         ] {
             assert!(says(heard, BRIEFLY), "{heard}");
         }
