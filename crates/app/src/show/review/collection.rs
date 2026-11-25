@@ -55,7 +55,7 @@ fn demo() -> anyhow::Result<Root> {
     )?;
     fs::write(
         ended_early.join(Bundle::SUMMARY),
-        "Screen recording (0:20, 5 keyframes).\nThe recorded window closed before you finished.\nYour speech couldn't be transcribed; these frames are all that remains.\n",
+        "Speakeasy Show, a narrated screen recording (0:20, 5 keyframes).\nThe recorded window closed before you finished.\nYour speech couldn't be transcribed; these frames are all that remains.\n",
     )?;
     fs::remove_file(save(6, bundle)?.join("frames/frame-03.png"))?;
     Ok(Root {

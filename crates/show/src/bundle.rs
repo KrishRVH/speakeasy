@@ -229,7 +229,7 @@ impl fmt::Display for Summary<'_> {
         };
         writeln!(
             f,
-            "Screen recording ({}, {}): {}",
+            "Speakeasy Show, a narrated screen recording ({}, {}): {}",
             recording.duration,
             Count(keyframes.len(), "keyframe"),
             Code(directory.display())
@@ -275,6 +275,7 @@ impl fmt::Display for Summary<'_> {
         if let Some(wsl) = location.in_wsl() {
             writeln!(f, "From WSL, the same files are under {}.", Code(wsl))?;
         }
+        writeln!(f, "If the speakeasy-show skill is available, follow it.")?;
         let pages: Vec<&[Keyframe]> = sheet::pages(keyframes).collect();
         if !pages.is_empty() {
             let sheets = if pages.len() == 1 { "sheet" } else { "sheets" };

@@ -227,19 +227,23 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
         format!("`{}`", path.display())
     };
     assert_eq!(
-        lines[0],
-        format!(
-            "Screen recording (0:08, 7 keyframes): `{}`",
-            directory.display()
-        )
+        lines[0..2],
+        [
+            format!(
+                "Speakeasy Show, a narrated screen recording (0:08, 7 keyframes): `{}`",
+                directory.display()
+            ),
+            "If the speakeasy-show skill is available, follow it.".to_owned(),
+        ],
+        "A pasted summary does not say what it is or how to read it"
     );
     assert!(
-        lines[1].starts_with("Before acting, open the contact sheets, then the full-size frames"),
+        lines[2].starts_with("Before acting, open the contact sheets, then the full-size frames"),
         "{}",
-        lines[1]
+        lines[2]
     );
     assert_eq!(
-        lines[2..4],
+        lines[3..5],
         [
             format!(
                 "Contact sheet 1 (frames #1–#4): {}",

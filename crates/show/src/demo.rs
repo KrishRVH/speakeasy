@@ -478,7 +478,8 @@ mod tests {
         assert_eq!(
             summary,
             format!(
-                "Screen recording (0:20, 5 keyframes): `{}`
+                "Speakeasy Show, a narrated screen recording (0:20, 5 keyframes): `{}`
+If the speakeasy-show skill is available, follow it.
 Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
 Contact sheet: `{}`
 - #1 (0:02) “Here's the settings window.”
@@ -542,7 +543,8 @@ Show ID: `demo`. An agent with Speakeasy's MCP tools can open this Show by that 
         assert_eq!(
             summary,
             format!(
-                "Screen recording (0:20, 4 keyframes): `{}`
+                "Speakeasy Show, a narrated screen recording (0:20, 4 keyframes): `{}`
+If the speakeasy-show skill is available, follow it.
 Before acting, open the contact sheet, then the full-size frames that matter: they show what the words leave out. Speech recognition can mishear a name; where the screen spells it differently, trust the screen. Cite frames as #N and marks by their circled numbers.
 Contact sheet: `{}`
 - #1 (0:02) clicked (x 0.19, y 0.32)
