@@ -205,7 +205,7 @@ confirmation, with exported copies and any pending recovery audio left in place.
   recovery audio stay in Speakeasy.
 - **Export video…** writes a new MP4 with saved ink, audio, and optional captions where available.
   Install FFmpeg 5.1 or later with H.264 and AAC support, put `ffmpeg` on PATH, then restart
-  Speakeasy.
+  Speakeasy. On Mac, a Homebrew or MacPorts install also works.
 - **Recover Show** restores surviving footage and audio from an interrupted recording as a new
   bundle, using your configured engine and the original language. It keeps the original expiry.
   **Transcribe narration** retries pending audio and saves a new copy. Pending audio follows its
