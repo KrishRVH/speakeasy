@@ -65,14 +65,16 @@ impl Talk {
         }
     }
 
-    fn other_key(&mut self, down: bool) -> Decision {
-        let interrupted = down && self.interrupt();
+    /// Only a fresh press interrupts a hold. A key held from before it repeats into the hold, as
+    /// a source key does when a remapper turns it into the talk key.
+    fn other_key(&mut self, stroke: Stroke) -> Decision {
+        let interrupted = stroke == Stroke::Press && self.interrupt();
         Decision::pass(interrupted.then_some(Action::Interrupt))
     }
 
     fn application_shortcut(&mut self, key: HoldKey) -> Decision {
         self.swallowing &= !key.bit();
-        self.other_key(true)
+        self.other_key(Stroke::Press)
     }
 
     fn interrupt(&mut self) -> bool {
@@ -640,7 +642,7 @@ impl Windows {
                 return Decision::pass(pinned.map(Action::Pin));
             }
             self.taps.interrupt();
-            return self.talk.other_key(down);
+            return self.talk.other_key(stroke);
         }
         if chord.code() == Some(key) {
             if stroke != Stroke::Repeat {
@@ -673,7 +675,7 @@ impl Windows {
             return Decision::pass(down.then_some(Action::Escape));
         }
         let Some(hold_key) = Self::hold_key(key) else {
-            return self.talk.other_key(down);
+            return self.talk.other_key(stroke);
         };
         if stroke == Stroke::Press && defers_to_applications(chord, self.pressed, at) {
             return self.talk.application_shortcut(hold_key);
@@ -1011,7 +1013,7 @@ impl Mac {
             },
             MacEvent::FlagsChanged { code, held } if Self::modifier_key(code).is_some() => {
                 self.taps.interrupt();
-                self.talk.other_key(held.other_shortcut)
+                self.talk.other_key(Stroke::new(held.other_shortcut, false))
             },
             MacEvent::FlagsChanged { .. } => {
                 self.taps.interrupt();
@@ -1049,7 +1051,7 @@ impl Mac {
             None if code == Self::ESCAPE => {
                 Decision::pass((stroke != Stroke::Release).then_some(Action::Escape))
             },
-            None => self.talk.other_key(stroke != Stroke::Release),
+            None => self.talk.other_key(stroke),
         }
     }
 

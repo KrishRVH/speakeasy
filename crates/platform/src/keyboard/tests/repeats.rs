@@ -99,6 +99,49 @@ fn a_key_already_down_when_a_hold_starts_never_acts_on_its_repeats() {
 }
 
 #[test]
+fn a_key_held_before_a_hold_repeats_through_it_without_interrupting() {
+    // A remapper turns a held Caps Lock into F13 after the hook sees Caps Lock and its repeats.
+    const CAPS_LOCK: u32 = 0x14;
+    let start = now();
+    let mut policy = Windows::new(only(WindowsShortcut::F13));
+    let f13 = held_for(WindowsShortcut::F13, &[]);
+    assert_eq!(
+        delivered(&policy.observe(CAPS_LOCK, true, NONE_HELD, start)),
+        []
+    );
+    assert!(policy.observe(F13, true, NONE_HELD, start).starts());
+    let repeat = policy.observe(CAPS_LOCK, true, f13, start);
+    assert_eq!(
+        delivered(&repeat),
+        [],
+        "A held key's repeat interrupted the hold"
+    );
+    assert!(!repeat.swallows());
+    assert_eq!(
+        delivered(&policy.observe(F13, false, f13, start)),
+        [Action::Release]
+    );
+
+    let talking = Modifiers {
+        talk: true,
+        ..NO_MODIFIERS
+    };
+    let mut mac = Mac::default();
+    mac.observe(key(MAC_Q, true, NO_MODIFIERS), keyboard_fn_up, start);
+    assert!(mac.observe(function(true), keyboard_fn_up, start).starts());
+    let repeat = mac.observe(mac_repeat(MAC_Q, talking), keyboard_fn_up, start);
+    assert_eq!(
+        delivered(&repeat),
+        [],
+        "A held key's repeat interrupted the hold"
+    );
+    assert_eq!(
+        delivered(&mac.observe(function(false), keyboard_fn_up, start)),
+        [Action::Release]
+    );
+}
+
+#[test]
 fn a_swallowed_key_stays_swallowed_when_the_alternative_shortcut_is_released_first() {
     let start = now();
     let later = start + APPLICATION_SHORTCUT;
