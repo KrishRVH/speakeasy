@@ -128,8 +128,9 @@ it.
 The library labels kept, interrupted, pending narration, early endings, and unreadable Shows.
 Refresh keeps the selected Show when present. Deletion or expiry clears selection and pixels. Read
 and export errors belong to the Show that produced them. Use the shared controls for navigation and
-for Keep, Export, and Copy. Discard and Delete use a confirmation tied to the selection, invalidated
-by refresh or a new selection.
+for Keep, Export, and Copy. Export's save dialog opens in Downloads, or the home folder without one.
+Discard and Delete use a confirmation tied to the selection, invalidated by refresh or a new
+selection.
 
 Summary is the user's editable file, and Narration is the recorded speech. Switching between them
 keeps summary edits. Timed marks and clauses carry a requested time, and the caption names the

@@ -14,6 +14,14 @@ pub(super) enum Kind {
     Video,
 }
 
+/// Downloads, or home without one: a folder the user finds again, unlike Speakeasy's Shows folder
+/// inside the hidden app-data folder.
+fn export_folder() -> Option<PathBuf> {
+    dirs::download_dir()
+        .filter(|folder| folder.is_dir())
+        .or_else(dirs::home_dir)
+}
+
 impl Review {
     pub(super) const fn can_export(&self) -> bool {
         self.export.is_none() && !matches!(self.write, Some(Write::Deleting { .. }))
@@ -36,7 +44,7 @@ impl Review {
             Kind::Video => "mp4",
         };
         let prompt = cx.prompt_for_new_path(
-            directory.parent().unwrap_or(&directory),
+            &export_folder().unwrap_or_else(|| directory.clone()),
             Some(&format!("{name}.{extension}")),
         );
         let task = cx.spawn(async move |view, cx| {

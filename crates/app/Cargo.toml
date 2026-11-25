@@ -23,6 +23,7 @@ async-channel.workspace = true
 base64.workspace = true
 cpal.workspace = true
 crc32fast.workspace = true
+dirs.workspace = true
 getrandom.workspace = true
 futures-util.workspace = true
 gpui.workspace = true
