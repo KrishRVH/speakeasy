@@ -27,8 +27,9 @@ words working in more places on Windows, and keeps agents' Show skills current a
   pasted without **Send to agent** names Speakeasy and points the agent to the speakeasy-show skill.
   `show skill --install` replaces any copy already there, and the first Show command after each
   update rewrites the copies it installed. Run it once more for a copy installed by 0.12.1 or
-  earlier. On Windows, an update ends running Show MCP servers so it can replace Speakeasy;
-  reconnect the agent's Speakeasy server afterward.
+  earlier. On Windows, updates from 0.13.0 on end running Show MCP servers so they can replace
+  Speakeasy; reconnect the agent's Speakeasy server afterward. 0.12.1 can't stop them, so close
+  agent sessions that use Speakeasy before updating to 0.13.0.
 - **Clearer messages.** Messages from the app, CLI, and MCP say “doesn't”, “isn't”, and “didn't”,
   and a failed save no longer leaves an Undo for a deleted preset.
 
