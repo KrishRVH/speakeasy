@@ -105,7 +105,7 @@ impl Take {
         at: Moment,
         prepare: impl FnOnce() -> Option<Image>,
     ) -> Result<TakeEvent, SourceError> {
-        require(!self.ended(), "checkpoint has events after its ending")?;
+        require(!self.ended(), "Checkpoint has events after its ending")?;
         valid_time(at)?;
         self.latest = self.latest.max(at);
         let entry = self
@@ -128,7 +128,7 @@ impl Take {
     }
 
     pub fn apply(&mut self, event: &TakeEvent) -> Result<(), SourceError> {
-        require(!self.ended(), "checkpoint has events after its ending")?;
+        require(!self.ended(), "Checkpoint has events after its ending")?;
         match event {
             TakeEvent::Surface(size) => {
                 valid_surface(*size)?;
@@ -142,10 +142,10 @@ impl Take {
                 pressed,
             } => {
                 valid_time(*at)?;
-                require(point.is_finite(), "checkpoint pointer is not finite")?;
+                require(point.is_finite(), "Checkpoint pointer isn't finite")?;
                 require(
                     self.tracker.locate(*part),
-                    "checkpoint pointer geometry is invalid",
+                    "Checkpoint pointer geometry is invalid",
                 )?;
                 self.latest = self.latest.max(*at);
                 self.tracker.observe(*at, *point, *drawing, *pressed);
@@ -174,7 +174,7 @@ impl Take {
                 valid_time(*at)?;
                 require(
                     *at >= self.through(),
-                    "checkpoint ending precedes its events",
+                    "Checkpoint ending precedes its events",
                 )?;
                 self.latest = *at;
                 self.ending = Some(*ending);
@@ -205,7 +205,7 @@ impl Take {
 pub fn header(budget: usize, surface: Size, framing: Framing) -> Result<Vec<u8>, SourceError> {
     require(
         budget <= MAX_BUDGET,
-        "checkpoint memory budget is too large",
+        "Checkpoint memory budget is too large",
     )?;
     valid_surface(surface)?;
     let mut data = Vec::new();
@@ -223,13 +223,13 @@ pub fn start(header: &[u8]) -> Result<Take, SourceError> {
     let (magic, record) = header.split_at_checked(MAGIC.len()).unwrap_or_default();
     require(
         header.len() == HEADER_BYTES && magic == MAGIC,
-        "unsupported or truncated checkpoint header",
+        "Unsupported or truncated checkpoint header",
     )?;
     let mut data = Cursor(payload(record, HEADER)?);
     let budget = usize::try_from(data.wide()?)
         .ok()
         .filter(|budget| *budget <= MAX_BUDGET)
-        .ok_or(SourceError("checkpoint memory budget is too large"))?;
+        .ok_or(SourceError("Checkpoint memory budget is too large"))?;
     let surface = Size {
         width: f32::from_le_bytes(data.take()?),
         height: f32::from_le_bytes(data.take()?),
@@ -238,7 +238,7 @@ pub fn start(header: &[u8]) -> Result<Take, SourceError> {
     let framing = match data.take()? {
         [AUTOMATIC] => Framing::Automatic,
         [CHOSEN] => Framing::Chosen,
-        _ => return Err(SourceError("checkpoint framing is unknown")),
+        _ => return Err(SourceError("Checkpoint framing is unknown")),
     };
     Ok(Take::new(budget, surface, framing))
 }
@@ -248,7 +248,7 @@ pub fn record_size(prefix: &[u8]) -> Result<usize, SourceError> {
         .usize()?
         .checked_add(RECORD_OVERHEAD)
         .filter(|length| *length <= RECORD_LIMIT)
-        .ok_or(SourceError("checkpoint record is too large"))
+        .ok_or(SourceError("Checkpoint record is too large"))
 }
 
 pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
@@ -306,7 +306,7 @@ pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
             POINTER_GAP
         },
         TakeEvent::Windows(layout) => {
-            require(layout.valid(), "checkpoint window layout is invalid")?;
+            require(layout.valid(), "Checkpoint window layout is invalid")?;
             data.extend_from_slice(&layout.at.as_millis().to_le_bytes());
             put(&mut data, layout.windows.len())?;
             for window in &layout.windows {
@@ -329,7 +329,7 @@ pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
     };
     require(
         data.len().saturating_add(RECORD_OVERHEAD) <= RECORD_LIMIT,
-        "checkpoint record is too large",
+        "Checkpoint record is too large",
     )?;
     framed(kind, &data)
 }
@@ -337,11 +337,11 @@ pub fn encode(event: &TakeEvent) -> Result<Vec<u8>, SourceError> {
 pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
     require(
         record.len() <= RECORD_LIMIT,
-        "checkpoint record is too large",
+        "Checkpoint record is too large",
     )?;
     let kind = *record
         .get(size_of::<u32>())
-        .ok_or(SourceError("checkpoint record is truncated"))?;
+        .ok_or(SourceError("Checkpoint record is truncated"))?;
     let mut data = Cursor(payload(record, kind)?);
     let event = match kind {
         SURFACE => TakeEvent::Surface(Size {
@@ -382,14 +382,14 @@ pub fn decode(record: &[u8]) -> Result<TakeEvent, SourceError> {
                 [1] => Ending::ScreenStopped,
                 [2] => Ending::WindowClosed,
                 [3] => Ending::WindowOffScreen,
-                _ => return Err(SourceError("checkpoint ending is invalid")),
+                _ => return Err(SourceError("Checkpoint ending is invalid")),
             },
         },
         POINTER_GAP => TakeEvent::PointerGap(Moment::from_millis(data.wide()?)),
         WINDOWS => TakeEvent::Windows(layout(&mut data)?),
-        _ => return Err(SourceError("unsupported checkpoint event")),
+        _ => return Err(SourceError("Unsupported checkpoint event")),
     };
-    require(data.0.is_empty(), "checkpoint record has trailing data")?;
+    require(data.0.is_empty(), "Checkpoint record has trailing data")?;
     Ok(event)
 }
 
@@ -397,7 +397,7 @@ impl Entry {
     fn encode(&self, data: &mut Vec<u8>) -> Result<(), SourceError> {
         require(
             self.width <= EDGE && self.height <= EDGE,
-            "checkpoint frame is too large",
+            "Checkpoint frame is too large",
         )?;
         data.push(u8::from(self.reset));
         for value in [self.width, self.height, self.tiles.len()] {
@@ -417,23 +417,23 @@ impl Entry {
         let (width, height, count) = (data.usize()?, data.usize()?, data.usize()?);
         require(
             (1..=EDGE).contains(&width) && (1..=EDGE).contains(&height),
-            "checkpoint frame dimensions are invalid",
+            "Checkpoint frame dimensions are invalid",
         )?;
         let signature = Signature::from_bytes(data.data(Signature::BYTES)?)
-            .ok_or(SourceError("checkpoint signature is truncated"))?;
+            .ok_or(SourceError("Checkpoint signature is truncated"))?;
         let geometry: Vec<_> = tiles(width, height).collect();
         require(
             count <= geometry.len()
                 && count <= data.0.len() / 8
                 && (!reset || count == geometry.len()),
-            "checkpoint tile count is invalid",
+            "Checkpoint tile count is invalid",
         )?;
         let mut versions = Vec::with_capacity(count);
         for position in 0..count {
             let (index, length) = (data.usize()?, data.usize()?);
             let tile = geometry
                 .get(index)
-                .ok_or(SourceError("checkpoint tile is outside the image"))?;
+                .ok_or(SourceError("Checkpoint tile is outside the image"))?;
             require(
                 if reset {
                     index == position
@@ -442,11 +442,11 @@ impl Entry {
                         .last()
                         .is_none_or(|(previous, _)| *previous < index)
                 },
-                "checkpoint tiles are out of order",
+                "Checkpoint tiles are out of order",
             )?;
             require(
                 length <= tile.encoded_limit(),
-                "checkpoint tile is too large",
+                "Checkpoint tile is too large",
             )?;
             versions.push((index, data.data(length)?.into()));
         }
@@ -462,7 +462,7 @@ impl Entry {
 
 fn put(bytes: &mut Vec<u8>, value: usize) -> Result<(), SourceError> {
     let value = u32::try_from(value)
-        .map_err(|_out_of_range| SourceError("checkpoint count is too large"))?;
+        .map_err(|_out_of_range| SourceError("Checkpoint count is too large"))?;
     bytes.extend_from_slice(&value.to_le_bytes());
     Ok(())
 }
@@ -478,7 +478,7 @@ fn layout(data: &mut Cursor<'_>) -> Result<Layout, SourceError> {
                 [1] => Layer::Menu,
                 [2] => Layer::Bar,
                 [3] => Layer::Floating,
-                _ => return Err(SourceError("checkpoint window layer is unknown")),
+                _ => return Err(SourceError("Checkpoint window layer is unknown")),
             };
             let edges = [data.take()?, data.take()?, data.take()?, data.take()?];
             Ok(Window {
@@ -490,7 +490,7 @@ fn layout(data: &mut Cursor<'_>) -> Result<Layout, SourceError> {
         })
         .collect::<Result<_, SourceError>>()?;
     let layout = Layout { at, windows };
-    require(layout.valid(), "checkpoint window layout is invalid")?;
+    require(layout.valid(), "Checkpoint window layout is invalid")?;
     Ok(layout)
 }
 
@@ -498,12 +498,12 @@ fn boolean(data: &mut Cursor<'_>) -> Result<bool, SourceError> {
     match data.take::<1>()? {
         [0] => Ok(false),
         [1] => Ok(true),
-        _ => Err(SourceError("checkpoint flag is invalid")),
+        _ => Err(SourceError("Checkpoint flag is invalid")),
     }
 }
 
 fn valid_time(at: Moment) -> Result<(), SourceError> {
-    require(at <= DURATION_LIMIT, "checkpoint time is out of range")
+    require(at <= DURATION_LIMIT, "Checkpoint time is out of range")
 }
 
 fn valid_surface(size: Size) -> Result<(), SourceError> {
@@ -511,7 +511,7 @@ fn valid_surface(size: Size) -> Result<(), SourceError> {
         [size.width, size.height]
             .into_iter()
             .all(|edge| edge > 0.0 && edge <= 65_536.0),
-        "checkpoint surface is invalid",
+        "Checkpoint surface is invalid",
     )
 }
 

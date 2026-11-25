@@ -95,7 +95,7 @@ def main(environment: Mapping[str, str]) -> int:
 def run(*command: str, environment: Mapping[str, str]) -> bytes:
     tool = shutil.which(command[0], path=environment.get("PATH"))
     if tool is None:
-        sys.exit(f"hygiene: `{command[0]}` is not on PATH")
+        sys.exit(f"hygiene: `{command[0]}` isn't on PATH")
     result = subprocess.run([tool, *command[1:]], check=False, capture_output=True, env=environment)
     if result.returncode != 0:
         sys.exit(f"hygiene: `{' '.join(command)}` failed: {os.fsdecode(result.stderr).strip()}")

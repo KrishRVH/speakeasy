@@ -9,7 +9,7 @@ fn next_event(requests: &Receiver<Event>) -> anyhow::Result<Event> {
         }
         anyhow::ensure!(
             started.elapsed() < PATIENCE,
-            "Instance request was not delivered"
+            "Instance request wasn't delivered"
         );
         thread::sleep(Duration::from_millis(5));
     }
@@ -63,7 +63,7 @@ fn a_command_waits_for_its_owner_while_shortcuts_keep_flowing() -> anyhow::Resul
     assert_eq!(next_request(&requests)?, Request::Cancel);
     assert!(
         !client.is_finished(),
-        "The caller did not wait for its owner"
+        "The caller didn't wait for its owner"
     );
     call.respond(Reply::refused("Fixture reason."));
     let reply = client.join().unwrap();

@@ -242,7 +242,7 @@ fn validate(
                 change.sample > previous.sample
                     && (change.content != previous.content || change.part != previous.part)
             }),
-        "Video crop geometry is not in sample order"
+        "Video crop geometry isn't in sample order"
     );
     let [x, y, right, bottom] = change.part;
     anyhow::ensure!(

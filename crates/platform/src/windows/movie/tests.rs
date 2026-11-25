@@ -126,7 +126,7 @@ fn encode_synthetic_movie_fragments_never_exceed_the_byte_cap() -> anyhow::Resul
     let finalized = capped.finish();
     assert!(
         failed || finalized.is_err(),
-        "Native encoder did not exercise its byte cap"
+        "Native encoder didn't exercise its byte cap"
     );
     assert!(std::fs::metadata(&path)?.len() <= limit);
 

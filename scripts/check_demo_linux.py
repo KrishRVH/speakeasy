@@ -178,7 +178,7 @@ def check_server(
     sleep: Callable[[float], None],
 ) -> None:
     if not select.select([display_pipe], [], [], 10)[0]:
-        raise RuntimeError("Private X server did not start")
+        raise RuntimeError("Private X server didn't start")
     number = display_pipe.readline().strip()
     if not number.isdecimal():
         raise RuntimeError("Private X server failed to allocate a display")
@@ -265,7 +265,7 @@ def verify(
             break
         sleep(0.05)
     else:
-        raise RuntimeError("Demo did not create Settings, Shows, and the pill")
+        raise RuntimeError("Demo didn't create Settings, Shows, and the pill")
     pill = owned["Speakeasy pill"]
     with Display(env["DISPLAY"]) as display:
         # Inspect only owned windows. Metadata can arrive before mapping; XGetImage needs
@@ -297,7 +297,7 @@ def verify(
             print("PASS: GUI startup, rendering, and preview show/hide completion.")
             return owned
         sleep(0.1)
-    raise RuntimeError("Preview did not show and finally unmap the pill")
+    raise RuntimeError("Preview didn't show and finally unmap the pill")
 
 
 class Arguments(argparse.Namespace):

@@ -40,7 +40,7 @@ fn a_recorded_shortcut_with_a_key_claims_only_the_press_that_completes_it() {
     assert_eq!(
         delivered(&policy.observe(LEFT_SHIFT, false, both, now())),
         [Action::Release],
-        "Lifting a modifier did not end the hold"
+        "Lifting a modifier didn't end the hold"
     );
     let release = policy.observe(SPACE, false, read(&[LEFT_CONTROL]), now());
     assert!(
@@ -183,7 +183,7 @@ fn the_recorder_reports_held_modifiers_and_ends_on_a_key_a_release_or_escape() {
             )
             .expect("Option was held"),
         )),
-        "Releasing a lone modifier did not record it with its side"
+        "Releasing a lone modifier didn't record it with its side"
     );
 
     let mut recorder = Recorder::default();
@@ -194,7 +194,7 @@ fn the_recorder_reports_held_modifiers_and_ends_on_a_key_a_release_or_escape() {
     recorder.modifiers(control);
     assert!(
         matches!(recorder.modifiers(Pressed::NONE), Recorded::Chosen(shortcut) if !shortcut.has_key()),
-        "Modifiers held together were not recorded together"
+        "Modifiers held together weren't recorded together"
     );
 
     let mut recorder = Recorder::default();
@@ -219,7 +219,7 @@ fn a_mac_recording_leaves_out_the_fn_flag_macos_sets_on_function_keys() {
     recorder.modifiers(function);
     let f5 = u16::try_from(MAC_F5).unwrap_or_default();
     let Recorded::Chosen(shortcut) = recorder.key(f5, false, Some(Modifier::Function)) else {
-        panic!("F5 did not end the recording");
+        panic!("F5 didn't end the recording");
     };
     assert_eq!(MacShortcut::new(shortcut.chord()).to_string(), "f5");
     assert!(matches!(
@@ -346,7 +346,7 @@ fn a_windows_shortcut_that_holds_win_or_alt_marks_it_used_so_start_stays_shut() 
     let control = |key: u16| u32::from(key) == LEFT_CONTROL;
     assert!(
         Windows::menu_held(LEFT_WINDOWS, true, control),
-        "Win going down was not counted before async key state shows it"
+        "Win going down wasn't counted before async key state shows it"
     );
     assert!(!Windows::menu_held(RIGHT_CONTROL, true, |_| false));
     assert!(Windows::menu_held(LETTER_H, true, |key| u32::from(key) == LEFT_ALT));

@@ -76,7 +76,7 @@ fn agent_prompt(
     );
     let wsl = wsl();
     let location = Location::managed(&entry.directory, wsl.as_ref())
-        .context("This Show's folder name is not Unicode text")?;
+        .context("This Show's folder name isn't Unicode text")?;
     prompt(location, &sheets, &entry.file(Bundle::SUMMARY)).map(Some)
 }
 

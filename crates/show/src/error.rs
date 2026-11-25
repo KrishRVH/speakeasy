@@ -44,12 +44,12 @@ impl fmt::Display for Error {
         match &self.0 {
             Kind::Dimensions { width, height } => write!(
                 f,
-                "a {width}×{height} image is empty, too large, or mismatched"
+                "A {width}×{height} image is empty, too large, or mismatched"
             ),
-            Kind::Unsampled => f.write_str("no frames were sampled to choose keyframes from"),
-            Kind::Manifest(_) => f.write_str("the manifest couldn't be encoded"),
-            Kind::Png(_) => f.write_str("the PNG couldn't be encoded"),
-            Kind::Typeface => f.write_str("the badge typeface couldn't be read"),
+            Kind::Unsampled => f.write_str("No frames were sampled to choose keyframes from"),
+            Kind::Manifest(_) => f.write_str("The manifest couldn't be encoded"),
+            Kind::Png(_) => f.write_str("The PNG couldn't be encoded"),
+            Kind::Typeface => f.write_str("The badge typeface couldn't be read"),
             Kind::Invalid(reason) => f.write_str(reason),
         }
     }

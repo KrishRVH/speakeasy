@@ -20,9 +20,9 @@ impl fmt::Display for Unreadable {
         match self {
             Self::Unsupported(version) => write!(
                 out,
-                "unsupported Show format version {version}; update Speakeasy to open it"
+                "Unsupported Show format version {version}; update Speakeasy to open it"
             ),
-            Self::Malformed(error) => write!(out, "can't read show.json: {error}"),
+            Self::Malformed(error) => write!(out, "Can't read show.json: {error}"),
             Self::Inconsistent(rule) => write!(out, "show.json is inconsistent: {rule}"),
         }
     }
@@ -110,41 +110,41 @@ impl Manifest {
         };
         require(
             self.recording.spaces_valid(),
-            "pointer coordinate spaces are invalid",
+            "Pointer coordinate spaces are invalid",
         )?;
         require(
             (1..=MOST_KEYFRAMES).contains(&self.keyframes.len()),
-            "a Show needs between 1 and 36 keyframes",
+            "A Show needs between 1 and 36 keyframes",
         )?;
         let mut previous_time = Moment::START;
         let mut previous_mark = 0;
         for (position, frame) in self.keyframes.iter().enumerate() {
             require(
                 frame.index == position.saturating_add(1),
-                "frame numbers must start at 1 and be consecutive",
+                "Frame numbers must start at 1 and be consecutive",
             )?;
             require(
                 frame.at >= previous_time && frame.at <= self.recording.duration,
-                "frame times must be ordered and within the recording",
+                "Frame times must be ordered and within the recording",
             )?;
             require(
                 frame.marks.end <= self.marks.len(),
-                "a frame refers to a mark that does not exist",
+                "A frame refers to a mark that doesn't exist",
             )?;
             require(
                 frame
                     .crop
                     .is_none_or(|crop| crop != Rect::UNIT && spaces::valid(crop)),
-                "a frame crop must be a part of the screen",
+                "A frame crop must be a part of the screen",
             )?;
             if !frame.marks.is_empty() {
                 require(
                     frame.reason == Reason::Mark,
-                    "only mark keyframes may refer to marks",
+                    "Only mark keyframes may refer to marks",
                 )?;
                 require(
                     frame.marks.start >= previous_mark,
-                    "frame mark ranges must be ordered and disjoint",
+                    "Frame mark ranges must be ordered and disjoint",
                 )?;
                 previous_mark = frame.marks.end;
             }
@@ -153,11 +153,11 @@ impl Manifest {
         for (position, mark) in self.marks.iter().enumerate() {
             require(
                 mark.number == position.saturating_add(1),
-                "mark numbers must start at 1 and be consecutive",
+                "Mark numbers must start at 1 and be consecutive",
             )?;
             require(
                 mark.strokes.end <= self.recording.strokes.len(),
-                "a mark refers to a stroke that does not exist",
+                "A mark refers to a stroke that doesn't exist",
             )?;
         }
         Ok(())

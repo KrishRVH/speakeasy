@@ -241,10 +241,10 @@ impl fmt::Debug for Entry {
 
 impl Journal {
     fn arrange(&mut self, layout: &Layout) -> Result<(), SourceError> {
-        require(layout.valid(), "checkpoint window layout is invalid")?;
+        require(layout.valid(), "Checkpoint window layout is invalid")?;
         require(
             self.layouts.last().is_none_or(|last| last.at <= layout.at),
-            "checkpoint window layouts are out of order",
+            "Checkpoint window layouts are out of order",
         )?;
         self.layouts.push(layout.clone());
         Ok(())
@@ -257,14 +257,14 @@ impl Journal {
             // prefix intact.
             require(
                 self.admits() && self.has_time(),
-                "checkpoint frame disagrees with sampling",
+                "Checkpoint frame disagrees with sampling",
             )?;
             require(
                 entry.reset
                     || self.segments.last().is_some_and(|segment| {
                         segment.width == entry.width && segment.height == entry.height
                     }),
-                "checkpoint delta has no preceding frame",
+                "Checkpoint delta has no preceding frame",
             )?;
         }
         if let Some(Admission(journal)) = self.admit()

@@ -97,7 +97,7 @@ impl Review {
                 let (edit, receipt) = Edit::new(move || {
                     export::write(&show, &destination).map(|exported| {
                         format!(
-                            "Exported to {}. This copy does not expire automatically.",
+                            "Exported to {}. This copy doesn't expire automatically.",
                             exported.path.display()
                         )
                     })

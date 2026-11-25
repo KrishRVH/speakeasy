@@ -145,9 +145,7 @@ impl encode::Codec for Codec {
             self.native.finishWritingWithCompletionHandler(&completion);
         }
         drop(completion);
-        reply
-            .recv()
-            .context("Movie finalization did not complete")?;
+        reply.recv().context("Movie finalization didn't complete")?;
         self.finished = true;
 
         let status = unsafe { self.native.status() };

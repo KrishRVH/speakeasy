@@ -35,7 +35,7 @@ try {
         if (!$signer) { return }
         $signature = Get-AuthenticodeSignature -LiteralPath $Path
         if ($signature.Status -ne 'Valid' -or $signature.SignerCertificate.Thumbprint -ne $signingCertificate -or !$signature.TimeStamperCertificate) {
-            throw 'The Windows package does not have its expected valid timestamped publisher signature.'
+            throw 'The Windows package doesn''t have its expected valid timestamped publisher signature.'
         }
     }
     # GPUI compiles its release shaders with the Windows SDK compiler.
@@ -62,13 +62,13 @@ try {
         Copy-Item "target/x86_64-pc-windows-msvc/release/$executable" $destination
         $image = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes("$destination/$executable"))
         if ($image.IndexOf('VCRUNTIME140', [StringComparison]::OrdinalIgnoreCase) -ge 0) {
-            throw "$executable imports the Visual C++ runtime, which Windows does not include"
+            throw "$executable imports the Visual C++ runtime, which Windows doesn't include"
         }
         Sign-PackageFile (Join-Path $destination $executable)
     }
     $version = & "$destination/speakeasy-cli.exe" --version
     if ($LASTEXITCODE -ne 0 -or $version -notmatch '^speakeasy \d+\.\d+\.\d+$') {
-        throw 'The console entry did not return its version and exit status to PowerShell'
+        throw 'The console entry didn''t return its version and exit status to PowerShell'
     }
     Copy-Item 'settings.example.json' $destination
     Copy-Item 'LICENSE' $destination

@@ -896,7 +896,7 @@ async fn arm_practice<Host: Sync>(
 
 async fn practice_text(receipt: &mut mpsc::Receiver<PracticeEvent>) -> anyhow::Result<String> {
     let Some(PracticeEvent::Text(text)) = timeout(PATIENCE, receipt.recv()).await? else {
-        bail!("Practice did not receive its transcript");
+        bail!("Practice didn't receive its transcript");
     };
     Ok(text)
 }

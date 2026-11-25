@@ -27,9 +27,9 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(100);
 const REVEAL_ATTEMPTS: u32 = 25;
 const REVEAL_RETRY: Duration = Duration::from_millis(20);
 
-const NOT_RUNNING: &str = "Speakeasy is not running. Start it, then try again.";
+const NOT_RUNNING: &str = "Speakeasy isn't running. Start it, then try again.";
 const UNCONFIRMED: &str =
-    "Speakeasy did not confirm the command. Check its state before trying again.";
+    "Speakeasy didn't confirm the command. Check its state before trying again.";
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) enum Request {
@@ -102,7 +102,7 @@ impl Instance {
     pub(crate) fn send(path: &Path, request: Request) -> anyhow::Result<()> {
         connect(path, &Message::Shortcut(request))
             .map(drop)
-            .context("Speakeasy is not running. Start it before using a desktop shortcut")
+            .context("Speakeasy isn't running. Start it before using a desktop shortcut")
     }
 
     pub(crate) fn control(path: &Path, command: Command) -> Reply {

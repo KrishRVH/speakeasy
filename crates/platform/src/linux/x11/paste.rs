@@ -180,7 +180,7 @@ impl Paster {
             Inserted::Sent
         } else {
             Inserted::Copied(
-                "Text copied. Automatic paste did not complete; check your editor before pasting manually.",
+                "Text copied. Automatic paste didn't complete; check your editor before pasting manually.",
             )
         })
     }

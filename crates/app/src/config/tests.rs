@@ -57,7 +57,7 @@ fn a_save_keeps_hand_edits_and_path_spellings() -> anyhow::Result<()> {
         r#"{"engine_executable":"engine","model":"model.gguf","threads":4}"#,
     )?;
     let (base, Startup::Configured(_)) = Config::load(&path) else {
-        bail!("The settings did not validate");
+        bail!("The settings didn't validate");
     };
 
     fs::write(
@@ -293,7 +293,7 @@ fn settings_without_an_engine_start_unconfigured_with_their_other_choices() -> a
     assert_eq!(
         config.engine,
         Engine::Nemo,
-        "An omitted engine key did not use the current default"
+        "An omitted engine key didn't use the current default"
     );
     Ok(())
 }
@@ -318,7 +318,7 @@ fn valid_settings_configure_dictation_with_resolved_paths() -> anyhow::Result<()
         r#"{"engine_executable":"engine","model":"model.gguf"}"#,
     ))?;
     let Startup::Configured(valid) = startup else {
-        bail!("Valid settings did not configure dictation");
+        bail!("Valid settings didn't configure dictation");
     };
     assert_eq!(
         valid.engine_executable,

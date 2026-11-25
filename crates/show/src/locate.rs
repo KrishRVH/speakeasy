@@ -75,7 +75,7 @@ impl Manifest {
         };
         if !words.is_sorted_by_key(|word| word.span.start()) {
             return Err(Unlocated(
-                "Narration word timings are not in recording order",
+                "Narration word timings aren't in recording order",
             ));
         }
         let spoken: Vec<_> = words

@@ -200,7 +200,7 @@ mod tests {
         assert_eq!(
             read(&run, RRF_RT_REG_SZ, &mut data)?,
             Some(&command(exe)[..]),
-            "Turning on did not write the quoted path as a string"
+            "Turning on didn't write the quoted path as a string"
         );
         delete(&run)?;
         assert_eq!(

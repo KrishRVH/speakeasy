@@ -22,7 +22,7 @@ fn native_show_video_review_scrubs_steps_and_releases_its_reader() -> anyhow::Re
     });
     outcome
         .try_recv()
-        .context("Video review acceptance did not complete")?
+        .context("Video review acceptance didn't complete")?
 }
 
 #[expect(
@@ -62,13 +62,13 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
                     Actions {
                         preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         edit: |_, _, _| {
-                            anyhow::bail!("Synthetic video review does not edit bundles")
+                            anyhow::bail!("Synthetic video review doesn't edit bundles")
                         },
                         can_copy: |_| false,
                         copy: |_, _| {
-                            anyhow::bail!("Synthetic video review does not use the clipboard")
+                            anyhow::bail!("Synthetic video review doesn't use the clipboard")
                         },
-                        recover: |_, _| Err("Synthetic video review does not recover audio"),
+                        recover: |_, _| Err("Synthetic video review doesn't recover audio"),
                     },
                     window,
                     cx,
@@ -209,7 +209,7 @@ async fn exercise_video(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let dragged = window.read_with(cx, |view, _| view.library.selected().cloned())?;
     assert!(
         dragged.as_ref().is_some_and(|key| key.frame >= 89),
-        "Dragging did not reach the final quarter: selected {:?}",
+        "Dragging didn't reach the final quarter: selected {:?}",
         dragged.as_ref().map(|key| key.frame)
     );
     cx.update_window(window.into(), |_, window, cx| {

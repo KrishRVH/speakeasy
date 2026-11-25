@@ -60,7 +60,7 @@ fn save_live(
         |_| Ok(()),
     )?
     else {
-        bail!("Synthetic Show was not saved");
+        bail!("Synthetic Show wasn't saved");
     };
     Ok((show, preservation))
 }
@@ -91,7 +91,7 @@ async fn a_failed_save_recovers_by_transcribing_the_kept_audio() -> anyhow::Resu
     let interrupted = interrupted(root.path())?;
     assert!(!interrupted.narration_pending());
     let reopened = reopen_with(&interrupted)?;
-    let speech = reopened.speech.context("The kept audio was not offered")?;
+    let speech = reopened.speech.context("The kept audio wasn't offered")?;
     assert_eq!(&*speech.language, "fr");
     assert!(!speech.incomplete);
     Ok(())
@@ -185,7 +185,7 @@ async fn a_narration_retry_saves_a_copy_only_when_it_hears_words() -> anyhow::Re
         uncopied,
     )?
     else {
-        bail!("Retry did not save a narrated copy")
+        bail!("Retry didn't save a narrated copy")
     };
     assert_ne!(copy.directory(), original.directory());
     assert_eq!(fs::read(&summary)?, b"user's edited summary");

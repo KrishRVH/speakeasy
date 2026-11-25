@@ -97,7 +97,7 @@ pub(in crate::shell::settings) async fn setup_rechecks_unchanged_settings(
     );
     ensure!(
         rechecked,
-        "Setup that kept the saved speech paths did not check them again"
+        "Setup that kept the saved speech paths didn't check them again"
     );
     Ok(())
 }
@@ -111,7 +111,7 @@ pub(in crate::shell::settings) fn exercise(
         view.act(SettingsAction::Onboarding(Action::Replay), window, cx);
         ensure!(
             view.onboarding == Some(Step::Prepare),
-            "Replay did not open setup"
+            "Replay didn't open setup"
         );
         let path = cx.global::<Services>().path.clone();
         view.config.model = PathBuf::new();
@@ -146,7 +146,7 @@ pub(in crate::shell::settings) fn exercise(
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
             view.onboarding == Some(Step::Permissions),
-            "Setup did not reach permissions"
+            "Setup didn't reach permissions"
         );
         anyhow::Ok(())
     })??;
@@ -155,7 +155,7 @@ pub(in crate::shell::settings) fn exercise(
         view.act(SettingsAction::Onboarding(Action::Next), window, cx);
         ensure!(
             view.onboarding == Some(Step::Practice),
-            "Permissions did not reach practice"
+            "Permissions didn't reach practice"
         );
         ensure!(
             view.practice.live.is_none(),
@@ -182,7 +182,7 @@ pub(in crate::shell::settings) fn exercise(
     settings.update(cx, |view, _, _| {
         ensure!(
             view.onboarding == Some(Step::Ready),
-            "Recognition did not unlock completion from the focused primary control"
+            "Recognition didn't unlock completion from the focused primary control"
         );
         ensure!(
             view.practice.text.is_empty(),
@@ -199,7 +199,7 @@ pub(in crate::shell::settings) fn exercise(
         view.act(SettingsAction::Onboarding(Action::Finish), window, cx);
         ensure!(
             view.onboarding.is_none(),
-            "Finish did not return to Settings"
+            "Finish didn't return to Settings"
         );
         ensure!(view.config == original, "The tour changed user settings");
         view.act(SettingsAction::Onboarding(Action::Replay), window, cx);

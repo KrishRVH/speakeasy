@@ -36,7 +36,7 @@ fn native_show_review_navigates_damage_and_releases_private_images() -> anyhow::
     });
     outcome
         .try_recv()
-        .context("Review acceptance did not complete")?
+        .context("Review acceptance didn't complete")?
 }
 
 struct TestReads(preview::Reads);
@@ -108,7 +108,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                         },
                         preview: |request, cx| cx.global_mut::<TestReads>().0.submit(request),
                         can_copy: |_| false,
-                        copy: |_, _| anyhow::bail!("Synthetic review does not use the clipboard"),
+                        copy: |_, _| anyhow::bail!("Synthetic review doesn't use the clipboard"),
                         recover: |_, cx| {
                             let (completed, receipt) = oneshot::channel();
                             cx.global::<Recoveries>()
@@ -174,7 +174,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         }
         window
             .focused(cx)
-            .context("Next did not receive keyboard focus")
+            .context("Next didn't receive keyboard focus")
     })??;
     for (stroke, before, after) in [("enter", 0, 1), ("space", 1, 2)] {
         cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
@@ -195,7 +195,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
         let frame = window.read_with(cx, |view, _| view.library.selected().map(|key| key.frame))?;
         ensure!(
             frame == Some(after),
-            "Next did not activate exactly once on key-up"
+            "Next didn't activate exactly once on key-up"
         );
     }
     more_actions(window, cx)?;
@@ -220,7 +220,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     for at in [100, 700, 1_500, 19_000] {
         journal
             .admit()
-            .context("Synthetic frame was not admitted")?
+            .context("Synthetic frame wasn't admitted")?
             .record(
                 speakeasy_show::Moment::from_millis(at),
                 speakeasy_show::Image::from_bgra(3, 2, [90, 40, 10, 255].repeat(6))?,
@@ -258,7 +258,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     let request = window.update(cx, |view, _, cx| {
         view.act(Action::Pane(Pane::Narration), cx);
         view.act(Action::Clause(0), cx);
-        let request = view.request.context("Narration did not select a frame")?;
+        let request = view.request.context("Narration didn't select a frame")?;
         let detail = view
             .detail
             .as_ref()
@@ -454,12 +454,12 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .find(|row| row.directory == directory)
                 .and_then(|row| row.pinned),
             Some(true),
-            "Keep did not mark the selected Show kept"
+            "Keep didn't mark the selected Show kept"
         );
     })?;
     ensure!(
         directory.join(".pinned").is_file(),
-        "The Keep action did not keep the selected Show"
+        "The Keep action didn't keep the selected Show"
     );
     fs::remove_file(directory.join(".pinned"))?;
     fs::write(directory.join("summary.md"), "Updated synthetic summary")?;
@@ -482,7 +482,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
                 .find(|row| row.directory == directory)
                 .and_then(|row| row.pinned),
             Some(false),
-            "Activation did not reread retention changed outside the viewer"
+            "Activation didn't reread retention changed outside the viewer"
         );
     })?;
     deletion::exercise(window, &directory, cx).await?;
@@ -576,7 +576,7 @@ async fn exercise(cx: &mut AsyncApp) -> anyhow::Result<()> {
     })??;
     let recovery = recovering
         .try_recv()
-        .context("Recover did not request a recovery")?;
+        .context("Recover didn't request a recovery")?;
     let failed = Err("Synthetic recovery failed; the checkpoint remains.".into());
     ensure!(
         recovery.send(failed).is_ok(),
@@ -735,7 +735,7 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
     let opened = window.read_with(cx, |view, _| view.menu)?;
     ensure!(
         matches!(opened, menu::Menu::Open(Some(_))),
-        "Enter on More actions did not open its menu at an available action"
+        "Enter on More actions didn't open its menu at an available action"
     );
     cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
     key(window, "down", cx)?;
@@ -743,7 +743,7 @@ fn more_actions(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
         window.read_with(cx, |view, _| (view.menu, view.library.selected().cloned()))?;
     ensure!(
         moved != opened && moved.is_open(),
-        "Down did not move within the open menu"
+        "Down didn't move within the open menu"
     );
     ensure!(selected == shown, "Down in the open menu changed the Show");
     key(window, "escape", cx)?;
@@ -769,7 +769,7 @@ async fn resize(
     while cx.update_window(window.into(), |_, window, _| window.viewport_size())? != to {
         ensure!(
             start.elapsed() < Duration::from_secs(10),
-            "The review window did not resize"
+            "The review window didn't resize"
         );
         cx.background_executor()
             .timer(Duration::from_millis(10))
@@ -875,7 +875,7 @@ async fn export_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> any
             .as_ref()
             .is_some_and(|notice| notice.starts_with("Exported to "))
     })?;
-    ensure!(success, "Review did not report a completed export");
+    ensure!(success, "Review didn't report a completed export");
     let mut archive = zip::ZipArchive::new(fs::File::open(destination)?)?;
     let mut summary = Vec::new();
     std::io::Read::read_to_end(&mut archive.by_name("summary.md")?, &mut summary)?;
@@ -932,7 +932,7 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
                 .context("The displayed image was dropped")?;
             ensure!(
                 Arc::ptr_eq(&shown, &image),
-                "Copy moment did not retain the displayed pixels"
+                "Copy moment didn't retain the displayed pixels"
             );
             ensure!(
                 text.contains("Keyframe #") && text.contains("Show folder:"),
@@ -948,21 +948,18 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         view.copy(CopyKind::Evidence, cx);
         view.collection = Collection::Demo;
         view.actions.can_copy = |_| false;
-        view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
+        view.actions.copy = |_, _| anyhow::bail!("Synthetic review doesn't use the clipboard");
         anyhow::Ok(())
     })??;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     ensure!(
         cx.read_global::<CopyProbe, _>(|probe, _| probe.received),
-        "The visual copy action did not run"
+        "The visual copy action didn't run"
     );
     let copied = window.read_with(cx, |view, _| {
         view.notice.as_deref() == Some("Copied image, summary, and narration.")
     })?;
-    ensure!(
-        copied,
-        "The review did not report the synthetic copy result"
-    );
+    ensure!(copied, "The review didn't report the synthetic copy result");
 
     let selected = window.update(cx, |view, _, cx| {
         view.collection = Collection::Saved;
@@ -977,21 +974,21 @@ async fn copy_selected(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyho
         view.act(Action::Copy(CopyKind::Agent), cx);
         view.collection = Collection::Demo;
         view.actions.can_copy = |_| false;
-        view.actions.copy = |_, _| anyhow::bail!("Synthetic review does not use the clipboard");
+        view.actions.copy = |_, _| anyhow::bail!("Synthetic review doesn't use the clipboard");
         view.library.selected().map(|key| key.directory.clone())
     })?;
     wait_for(window, |view| view.copying.is_none(), cx).await?;
     let agent = cx.read_global::<CopyProbe, _>(|probe, _| probe.agent.clone());
     ensure!(
         agent.is_some() && agent == selected,
-        "Send to agent did not point at the selected Show"
+        "Send to agent didn't point at the selected Show"
     );
     let announced = window.read_with(cx, |view, _| {
         view.notice
             .as_deref()
             .is_some_and(|notice| notice.starts_with("Copied a prompt for your agent."))
     })?;
-    ensure!(announced, "Send to agent did not say what it copied");
+    ensure!(announced, "Send to agent didn't say what it copied");
     Ok(())
 }
 
@@ -1042,7 +1039,7 @@ async fn wait_for(
     while !window.read_with(cx, |view, _| ready(view))? {
         ensure!(
             start.elapsed() < Duration::from_secs(30),
-            "Review did not reach the expected state"
+            "Review didn't reach the expected state"
         );
         cx.background_executor()
             .timer(Duration::from_millis(10))
@@ -1100,7 +1097,7 @@ async fn pixels(window: WindowHandle<Review>, cx: &mut AsyncApp) -> anyhow::Resu
         }
         ensure!(
             start.elapsed() < Duration::from_secs(10),
-            "Review did not paint the synthetic frame"
+            "Review didn't paint the synthetic frame"
         );
         cx.background_executor()
             .timer(Duration::from_millis(20))

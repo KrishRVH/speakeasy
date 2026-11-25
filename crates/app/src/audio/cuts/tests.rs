@@ -95,7 +95,7 @@ fn speech_shorter_than_a_piece_is_never_cut() {
     assert_eq!(
         partition.map(|part| part.pieces),
         Some(1),
-        "Speech a piece long was not cut, so the short case proves nothing"
+        "Speech a piece long wasn't cut, so the short case proves nothing"
     );
 }
 

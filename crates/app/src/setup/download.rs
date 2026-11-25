@@ -89,7 +89,7 @@ pub(super) async fn fetch(
     drop(file);
     if !download.matches(hash) {
         fs::remove_file(&partial).map_err(file_error(directory))?;
-        bail!("A download did not match its published checksum. Try again.");
+        bail!("A download didn't match its published checksum. Try again.");
     }
     fs::rename(&partial, &path).map_err(file_error(directory))?;
     Ok(path)

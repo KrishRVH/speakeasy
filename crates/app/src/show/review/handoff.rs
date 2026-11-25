@@ -34,7 +34,7 @@ pub(super) fn text(
             "The microphone sent only silence; no recorded words are available.".into()
         },
         Narration::Lost(NarrationLoss::NotTranscribed) => {
-            "Recorded speech was not transcribed.".into()
+            "Recorded speech wasn't transcribed.".into()
         },
         Narration::Unavailable => "Recorded narration is unavailable.".into(),
     };

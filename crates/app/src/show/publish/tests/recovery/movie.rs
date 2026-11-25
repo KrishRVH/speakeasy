@@ -11,7 +11,7 @@ async fn movie_recovery_retains_playable_prefix_beyond_the_annotation_journal() 
         Ok(parent.path().to_owned())
     })?
     else {
-        bail!("Movie recovery did not publish");
+        bail!("Movie recovery didn't publish");
     };
     let entry = store::recall::Entry::open(show.directory(), None)?;
     let movie = entry.show?.movie.unwrap().metadata;
@@ -58,7 +58,7 @@ async fn movie_startup_failure_saves_stills_with_an_explicit_video_loss() -> any
             Ok(parent.path().to_owned())
         })?
         else {
-            bail!("Still recovery did not publish");
+            bail!("Still recovery didn't publish");
         };
         assert!(movie_lost);
         assert!(

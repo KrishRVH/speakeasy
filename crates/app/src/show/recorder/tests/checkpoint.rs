@@ -95,7 +95,7 @@ async fn a_failed_writer_warns_once_and_keeps_recording_in_memory() -> anyhow::R
                 }
                 assert!(
                     Instant::now() < deadline,
-                    "Writer failure did not reach the recorder"
+                    "Writer failure didn't reach the recorder"
                 );
                 wait(1).await;
             }

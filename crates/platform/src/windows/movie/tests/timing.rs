@@ -92,7 +92,7 @@ fn a_quiet_screen_saves_a_readable_fragment_before_finalization() -> anyhow::Res
         }
         assert!(
             Instant::now() < deadline,
-            "Quiet capture did not save a fragment before finalization"
+            "Quiet capture didn't save a fragment before finalization"
         );
         std::thread::sleep(Duration::from_millis(25));
     }

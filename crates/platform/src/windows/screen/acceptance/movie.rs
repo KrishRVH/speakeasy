@@ -38,7 +38,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
         let Some(crate::MovieEvent::Started { accepted, at, size }) =
             tokio::time::timeout(FIRST_FRAME, control.next()).await?
         else {
-            bail!("Owned movie did not request acceptance");
+            bail!("Owned movie didn't request acceptance");
         };
         assert!(at >= started && at < deadline);
         assert_eq!(
@@ -55,7 +55,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
             sample, accepted, ..
         }) = control.next().await
         else {
-            bail!("Synthetic movie did not request its content rectangle");
+            bail!("Synthetic movie didn't request its content rectangle");
         };
         assert_eq!(sample, 0);
         assert!(accepted.send(true).is_ok());
@@ -75,7 +75,7 @@ fn a_movie_survives_still_backpressure_and_closes_at_the_session_deadline() -> a
             ..
         }) = tokio::time::timeout(Duration::from_secs(5), control.next()).await?
         else {
-            bail!("Owned movie did not finish");
+            bail!("Owned movie didn't finish");
         };
         assert_eq!(through, deadline);
         assert!(

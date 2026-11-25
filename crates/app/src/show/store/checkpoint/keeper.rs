@@ -46,7 +46,7 @@ impl Keeper {
         } = Self::start(move || Ok(parent), SystemTime::now())?;
         anyhow::ensure!(
             frames.begin(budget, surface, framing),
-            "Synthetic frame log did not begin"
+            "Synthetic frame log didn't begin"
         );
         Ok((keeper, frames))
     }

@@ -16,7 +16,7 @@ fn source_bytes() -> anyhow::Result<Vec<u8>> {
     let mut journal = Journal::default();
     journal
         .admit()
-        .context("Synthetic frame was not admitted")?
+        .context("Synthetic frame wasn't admitted")?
         .record(
             Moment::START,
             Image::from_bgra(2, 2, [40, 50, 60, 255].repeat(4))?,
@@ -76,7 +76,7 @@ fn the_more_menu_opens_once_per_press_and_keyboard_skips_unavailable_actions() {
             .pointer()
             .pressed(Modality::Pointer, &enabled),
         Menu::Open(None),
-        "A later press on the trigger did not open a menu dismissed elsewhere"
+        "A later press on the trigger didn't open a menu dismissed elsewhere"
     );
     let keyed = Menu::Dismissed.pressed(Modality::Keyboard, &enabled);
     assert_eq!(keyed, Menu::Open(Some(1)));
@@ -146,7 +146,7 @@ async fn a_damaged_show_fails_only_the_preview_of_its_missing_frame() -> anyhow:
             fixture: root.fixture.clone(),
         })?;
         let preview::Work::Reading(receipt) = work else {
-            anyhow::bail!("Synthetic frame read was not drained");
+            anyhow::bail!("Synthetic frame read wasn't drained");
         };
         assert_eq!(receipt.await.is_ok(), valid);
     }

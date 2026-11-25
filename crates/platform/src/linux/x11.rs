@@ -89,7 +89,7 @@ impl Keyboard {
         let code = self.keycode(modifier)?;
         self.modifiers()
             .find_map(|(mask, codes)| codes.contains(&code).then_some(mask))
-            .context("Shortcut modifier is not mapped")
+            .context("Shortcut modifier isn't mapped")
     }
 
     fn lock_modifiers(&self) -> u16 {

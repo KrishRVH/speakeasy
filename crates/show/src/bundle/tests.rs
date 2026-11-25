@@ -235,7 +235,7 @@ fn the_summary_says_how_to_read_every_sheet_and_sets_each_full_path_apart() {
             ),
             "If the speakeasy-show skill is available, follow it.".to_owned(),
         ],
-        "A pasted summary does not say what it is or how to read it"
+        "A pasted summary doesn't say what it is or how to read it"
     );
     assert!(
         lines[2].starts_with("Before acting, open the contact sheets, then the full-size frames"),

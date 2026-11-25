@@ -419,7 +419,7 @@ fn fragment(
             let offset = i64::from(run.signed()?);
             require(
                 base.checked_add_signed(offset) == Some(next),
-                "Movie sample bytes are not contiguous",
+                "Movie sample bytes aren't contiguous",
             )?;
         } else if result.times.is_empty() {
             require(base == next, "Movie implicit sample base misses its data")?;
@@ -470,7 +470,7 @@ fn fragment(
     }
     require(
         !result.times.is_empty() && next == data.end,
-        "Movie fragment data does not match its sample table",
+        "Movie fragment data doesn't match its sample table",
     )?;
     Ok(result)
 }

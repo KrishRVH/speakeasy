@@ -129,7 +129,7 @@ fn setup(
         },
         Some(None) => writeln!(
             out,
-            "\nAgent in WSL: unavailable, because the default distribution turns off interop or drive mounting, or Speakeasy is not on a lettered drive."
+            "\nAgent in WSL: unavailable, because the default distribution turns off interop or drive mounting, or Speakeasy isn't on a lettered drive."
         )?,
     }
     Ok(())

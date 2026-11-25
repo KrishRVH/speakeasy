@@ -116,7 +116,7 @@ pub(super) fn read(bytes: &[u8]) -> Result<Track, MovieError> {
     let mut defaults = Fields::new(child(&extends, *b"trex")?.bytes);
     require(
         defaults.word()? == 0 && defaults.word()? == id && defaults.word()? == 1,
-        "Movie fragment defaults do not match its track",
+        "Movie fragment defaults don't match its track",
     )?;
     let result = Track {
         id,

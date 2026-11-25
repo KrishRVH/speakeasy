@@ -130,7 +130,7 @@ fn check_on_a_private_window_station() -> anyhow::Result<()> {
     assert_eq!(
         mark,
         clipboard_win::raw::seq_num(),
-        "The copy's mark is not the clipboard's sequence number after the write"
+        "The copy's mark isn't the clipboard's sequence number after the write"
     );
     assert_private_text("the pasted text")?;
     assert_private_image()?;
@@ -161,7 +161,7 @@ fn assert_restores_only_what_it_replaced(insert: &mut Insert) -> anyhow::Result<
     assert_previous(html, "A restore")?;
 
     let (mark, saved) = insert.copy(TEXT)?;
-    assert!(saved.is_some(), "The previous copy was not saved");
+    assert!(saved.is_some(), "The previous copy wasn't saved");
     copy_without_text()?;
     insert.restore(saved, &mark)?;
     let _clipboard = open_clipboard()?;

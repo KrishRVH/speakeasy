@@ -27,7 +27,7 @@ async fn start_admits_once_with_its_own_style_and_stop_is_session_bound() -> any
     assert_eq!(started.result, Disposition::Ok);
     let token = started
         .session
-        .context("Start did not identify its session")?;
+        .context("Start didn't identify its session")?;
     receive(&h.captures).await?;
     assert_eq!(
         h.call(Command::Start { style: None }).await?.result,

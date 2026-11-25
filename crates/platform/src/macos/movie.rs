@@ -228,5 +228,5 @@ fn pixels(image: &CGImage, size: [u32; 2]) -> anyhow::Result<BgraImage> {
     for pixel in pixels.as_chunks_mut::<4>().0 {
         pixel[3] = 255;
     }
-    BgraImage::new(size, pixels).context("Decoded video pixels do not match its canvas")
+    BgraImage::new(size, pixels).context("Decoded video pixels don't match its canvas")
 }

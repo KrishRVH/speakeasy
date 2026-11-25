@@ -83,7 +83,7 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
         .collect();
     ensure!(
         window_types == [atom(b"_NET_WM_WINDOW_TYPE_NOTIFICATION")?],
-        "Pill is not a notification window"
+        "Pill isn't a notification window"
     );
     ensure!(
         connection
@@ -97,12 +97,12 @@ fn check_idle_pill(cx: &mut App) -> anyhow::Result<()> {
     pill.update(cx, |_, window, _| window.set_window_visible(true))?;
     ensure!(
         connection.get_window_attributes(id)?.reply()?.map_state == MapState::VIEWABLE,
-        "Pill did not become viewable"
+        "Pill didn't become viewable"
     );
     pill.update(cx, |_, window, _| window.set_window_visible(false))?;
     ensure!(
         connection.get_window_attributes(id)?.reply()?.map_state == MapState::UNMAPPED,
-        "Pill did not become unmapped"
+        "Pill didn't become unmapped"
     );
     Ok(())
 }
@@ -138,7 +138,7 @@ fn check_managed_withdrawal(cx: &mut App) -> anyhow::Result<()> {
     for (listener, name) in [(&connection, "window manager"), (&taskbar, "taskbar")] {
         ensure!(
             withdrawn(listener, root, id)?,
-            "The {name} did not receive the managed window's synthetic withdrawal"
+            "The {name} didn't receive the managed window's synthetic withdrawal"
         );
     }
     Ok(())

@@ -448,7 +448,7 @@ pub(crate) mod tests {
                 assert!(!target.begin(Instant::now(), [2, 2], &stopping));
             })?;
             let Some(MovieEvent::Started { accepted, .. }) = control.next().await else {
-                anyhow::bail!("Synthetic movie did not ask for acceptance");
+                anyhow::bail!("Synthetic movie didn't ask for acceptance");
             };
             if cancel_checkpoint {
                 control.request_stop();

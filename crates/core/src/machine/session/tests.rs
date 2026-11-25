@@ -77,7 +77,7 @@ fn narration_lands_where_it_was_spoken_on_the_show_timeline() {
         None
     );
     let Stage::AwaitingFootage { narration, .. } = &session.stage else {
-        panic!("Narration did not move the Show on to its footage");
+        panic!("Narration didn't move the Show on to its footage");
     };
     assert_eq!(narration, &[Duration::from_millis(2_000)]);
 }

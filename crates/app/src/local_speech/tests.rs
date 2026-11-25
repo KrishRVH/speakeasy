@@ -174,7 +174,7 @@ fn server_arguments_match_each_engine() {
             .as_std()
             .get_envs()
             .any(|(name, value)| name == "NEMO_SPEECH_HTTP_API_KEY" && value.is_none()),
-        "NeMo inherited an API key the requests do not send"
+        "NeMo inherited an API key the requests don't send"
     );
     assert_eq!(
         arguments(&nemo),
@@ -661,14 +661,14 @@ async fn local_worker_recognizes_fixture_and_stops() -> anyhow::Result<()> {
 
     assert!(
         result.to_lowercase().contains("ask not what your country"),
-        "Fixture recognition did not contain the expected phrase"
+        "Fixture recognition didn't contain the expected phrase"
     );
     let stopped = Instant::now();
     worker.stop().await;
     eprintln!("Engine shutdown: {:?}", stopped.elapsed());
     assert!(
         worker.child.try_wait()?.is_some(),
-        "Owned worker did not terminate"
+        "Owned worker didn't terminate"
     );
     Ok(())
 }

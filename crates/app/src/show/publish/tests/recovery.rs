@@ -77,7 +77,7 @@ async fn recovery_frames_a_show_as_its_recording_chose() -> anyhow::Result<()> {
         let Published::Recovered { show, .. } =
             recover_with(interrupted, &permit, || Ok(parent.path().to_owned()))?
         else {
-            bail!("Recovery did not publish");
+            bail!("Recovery didn't publish");
         };
         let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
         let cropped = manifest
@@ -102,7 +102,7 @@ async fn recovery_preserves_original_expiry_and_publishes_once_without_narration
     let Published::Recovered { show, .. } =
         recover_with(interrupted, &permit, || Ok(parent.path().to_owned()))?
     else {
-        bail!("Recovery did not publish");
+        bail!("Recovery didn't publish");
     };
     let manifest = Manifest::parse(&fs::read(show.directory().join(Manifest::FILE))?)?;
     assert_eq!(

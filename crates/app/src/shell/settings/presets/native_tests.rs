@@ -27,14 +27,14 @@ pub(in crate::shell::settings) fn exercise(
         view.edit_preset(Edit::Save, window, cx);
         ensure!(
             view.config.presets.len() == 1 && !view.presets.naming,
-            "Saving a named preset did not store it"
+            "Saving a named preset didn't store it"
         );
         ensure!(
             view.config
                 .presets
                 .first()
                 .is_some_and(|preset| view.preset_in_use(preset)),
-            "A new preset is not shown as in use"
+            "A new preset isn't shown as in use"
         );
         view.presets.enter("Coding", cx);
         view.edit_preset(Edit::Save, window, cx);
@@ -77,7 +77,7 @@ pub(in crate::shell::settings) fn exercise(
                 && Vocabulary::new(&view.config.vocabulary).text("Use cube control.".into())
                     == "Use kubectl."
                 && view.config.recognition_terms.phrases() == ["Kubernetes"],
-            "Using a preset did not apply its language, corrections, and hints, or a correction being revised overwrote them"
+            "Using a preset didn't apply its language, corrections, and hints, or a correction being revised overwrote them"
         );
         let before = view.config.presets.clone();
         let model = std::mem::take(&mut view.config.model);
@@ -115,7 +115,7 @@ pub(in crate::shell::settings) fn exercise(
         view.edit_preset(Edit::Undo, window, cx);
         ensure!(
             view.config.presets.iter().map(Preset::name).eq(["Coding", "Other"]),
-            "Undo did not put a deleted preset back in its place"
+            "Undo didn't put a deleted preset back in its place"
         );
         view.edit_preset(Edit::Undo, window, cx);
         ensure!(
@@ -126,7 +126,7 @@ pub(in crate::shell::settings) fn exercise(
         view.edit_preset(Edit::Use(0), window, cx);
         ensure!(
             view.config.language == "en",
-            "The surviving preset was not usable"
+            "The surviving preset wasn't usable"
         );
         let mut incomplete = serde_json::to_value(Preset::capture("Earlier", &view.config)?)?;
         incomplete
@@ -139,7 +139,7 @@ pub(in crate::shell::settings) fn exercise(
         ensure!(
             view.config == before
                 && matches!(&view.notice, Some(Notice::Problem(text)) if text.contains("Choose an engine and model")),
-            "Using a preset saved without a model changed dictation or did not say what to fix"
+            "Using a preset saved without a model changed dictation or didn't say what to fix"
         );
         view.config.presets.pop();
         view.notice = None;

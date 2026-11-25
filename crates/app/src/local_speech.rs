@@ -580,7 +580,7 @@ impl From<reqwest::Error> for Unanswered {
 
 fn startup_exit(status: ExitStatus) -> String {
     let remedy = if status.code() == Some(USAGE_ERROR) {
-        "The selected engine does not accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
+        "The selected engine doesn't accept Speakeasy's server arguments. Switch Engine to match it, or choose a supported engine executable in Settings."
     } else {
         exit_remedy(status).unwrap_or(
             "Check the selected model and the engine's dependencies, or choose a compatible engine executable in Settings.",

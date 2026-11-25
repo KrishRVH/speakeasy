@@ -40,7 +40,7 @@ impl ClipboardContent {
     pub fn moment(text: String, width: u32, height: u32, bgra: Vec<u8>) -> anyhow::Result<Self> {
         let content = Self::text(text)?;
         let pixels = BgraImage::new([width, height], bgra)
-            .context("Clipboard image dimensions do not match its pixels")?;
+            .context("Clipboard image dimensions don't match its pixels")?;
         let image = Image {
             #[cfg(any(target_os = "windows", test))]
             dib: dib(&pixels)?,

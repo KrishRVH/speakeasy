@@ -527,7 +527,7 @@ fn per_monitor_aware() -> anyhow::Result<()> {
             DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2,
         ) != FALSE
     };
-    ensure!(aware, "The test process is not per-monitor DPI aware");
+    ensure!(aware, "The test process isn't per-monitor DPI aware");
     Ok(())
 }
 
@@ -601,7 +601,7 @@ impl Crop {
         let scale = width.strict_div(frame_width.cast_signed());
         ensure!(
             scale > 0 && frame_height.cast_signed().strict_mul(scale) == height,
-            "The frame does not match its part of the display"
+            "The frame doesn't match its part of the display"
         );
         let frame_pixels = |physical: i32| physical.strict_div(scale).cast_unsigned() as usize;
         let column = frame_pixels(area.left.strict_sub(left));
@@ -747,7 +747,7 @@ impl Scene {
         }
         ensure!(
             affinity(pattern) == Some(WDA_EXCLUDEFROMCAPTURE),
-            "The capture did not leave out a window opened while it ran"
+            "The capture didn't leave out a window opened while it ran"
         );
         drop(capture);
         self.check_owned(area)?;

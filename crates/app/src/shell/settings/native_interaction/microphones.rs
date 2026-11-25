@@ -41,7 +41,7 @@ pub(super) fn exercise(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> a
         view.toggle_menu(Menu::Microphone, window, cx);
         ensure!(
             view.microphones.len() == 2 && view.menus.cursor == 1,
-            "Reopening did not compact disconnected rows before positioning the cursor"
+            "Reopening didn't compact disconnected rows before positioning the cursor"
         );
         view.microphones_listed(Ok(devices(&["third"])), cx);
         view.menus.cursor = 1;

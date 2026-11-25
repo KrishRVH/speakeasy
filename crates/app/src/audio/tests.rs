@@ -153,7 +153,7 @@ fn a_microphone_lost_before_speech_fails_with_its_named_error() -> anyhow::Resul
     for samples in [Vec::new(), vec![0.0; 8_000], vec![1e-6; 8_000]] {
         let recorded = recorder(&samples, Some(cpal::ErrorKind::DeviceNotAvailable))?;
         let Outcome::Finished(Err(failure)) = record_released(recorded) else {
-            bail!("A microphone lost before any speech did not fail");
+            bail!("A microphone lost before any speech didn't fail");
         };
         assert!(!failure.is::<SilentMicrophone>());
         assert!(
@@ -189,7 +189,7 @@ fn a_microphone_that_stops_sending_after_speech_keeps_what_arrived() -> anyhow::
     speech().for_each(|sample| stopped.pcm.push(sample));
     stopped.pulse = stalled_since(true)?;
     let Outcome::Lost(sealed, lost) = record_released(stopped) else {
-        bail!("Speech before the microphone stopped sending audio was not kept");
+        bail!("Speech before the microphone stopped sending audio wasn't kept");
     };
     assert_eq!(wav_duration(&sealed.wav)?, Duration::from_secs(1));
     assert_eq!(lost.notice, "The microphone stopped sending audio.");

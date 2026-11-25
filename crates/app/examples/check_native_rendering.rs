@@ -99,7 +99,7 @@ fn main() -> anyhow::Result<()> {
     });
     outcome
         .try_recv()
-        .context("Native rendering check did not complete")?
+        .context("Native rendering check didn't complete")?
 }
 
 #[expect(
@@ -203,7 +203,7 @@ async fn wait_for_render(
         cx.background_executor().timer(POLL_INTERVAL).await;
         ensure!(
             started.elapsed() < TIMEOUT,
-            "Native frame source did not redraw"
+            "Native frame source didn't redraw"
         );
     }
     cx.background_executor().timer(PRESENT_SETTLE).await;
@@ -305,15 +305,15 @@ mod linux {
                     .context("Native image is shorter than its geometry")?;
                 Ok(u32::from_ne_bytes(*pixel) & 0x00FF_FFFF)
             };
-            ensure!(color(13, 13)? == ICON, "Embedded SVG did not render");
+            ensure!(color(13, 13)? == ICON, "Embedded SVG didn't render");
             ensure!(
                 color(50, 50)? == BACKGROUND,
-                "Window background did not render"
+                "Window background didn't render"
             );
             if draws_path {
                 ensure!(
                     color(24, 24)? == DIAMOND,
-                    "Path did not render after a pathless frame or resize"
+                    "Path didn't render after a pathless frame or resize"
                 );
             } else {
                 ensure!(

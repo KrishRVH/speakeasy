@@ -47,12 +47,12 @@ fn the_default_distribution_names_where_its_settings_live() {
                 r"\\wsl$\Ubuntu\etc".to_owned()
             ]
         ),
-        "\\\\wsl$ answers when \\\\wsl.localhost cannot"
+        "\\\\wsl$ answers when \\\\wsl.localhost can't"
     );
     assert_eq!(
         lookup(installed("Ubuntu"), &[]).0,
         None,
-        "Unreadable settings are not guessed"
+        "Unreadable settings aren't guessed"
     );
 }
 

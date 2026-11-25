@@ -54,7 +54,7 @@ try {
     Wait-For {
         $null = [TrayWindows]::EnumWindows($callback, [IntPtr]::Zero)
         $script:settings -ne [IntPtr]::Zero -and [TrayWindows]::IsWindowVisible($script:settings)
-    } 'Settings did not appear'
+    } 'Settings didn''t appear'
     $original = $script:settings
     foreach ($message in @('minimize', 'direct minimize', 'close')) {
         if ($message -eq 'minimize') {
@@ -64,7 +64,7 @@ try {
         } else {
             $null = [TrayWindows]::PostMessage($original, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
         }
-        Wait-For { ![TrayWindows]::IsWindowVisible($original) } "$message did not hide Settings"
+        Wait-For { ![TrayWindows]::IsWindowVisible($original) } "$message didn't hide Settings"
         $relaunch = New-Object Diagnostics.Process
         try {
             $relaunch.StartInfo.FileName = $Executable
@@ -72,10 +72,10 @@ try {
             $relaunch.StartInfo.WorkingDirectory = $WorkingDirectory
             $relaunch.StartInfo.UseShellExecute = $false
             $null = $relaunch.Start()
-            if (!$relaunch.WaitForExit(5000)) { $relaunch.Kill(); throw 'Second launch did not exit' }
+            if (!$relaunch.WaitForExit(5000)) { $relaunch.Kill(); throw 'Second launch didn''t exit' }
             if ($relaunch.ExitCode -ne 0) { throw "Second launch failed: $($relaunch.ExitCode)" }
         } finally { $relaunch.Dispose() }
-        Wait-For { [TrayWindows]::IsWindowVisible($original) } 'Relaunch did not restore the original Settings window'
+        Wait-For { [TrayWindows]::IsWindowVisible($original) } 'Relaunch didn''t restore the original Settings window'
     }
     if ([IO.File]::ReadAllText($config) -ne 'demo preserves this file') { throw 'Demo changed configuration' }
     # Use the same WM_QUIT signal as GPUI, targeted only at this owned UI thread.
@@ -83,9 +83,9 @@ try {
     $thread = [TrayWindows]::GetWindowThreadProcessId($original, [ref]$owner)
     if ($owner -ne $script:app.Id) { throw 'Settings ownership changed' }
     $null = [TrayWindows]::PostThreadMessage($thread, 0x0012, [IntPtr]::Zero, [IntPtr]::Zero)
-    if (!$script:app.WaitForExit(4000)) { throw 'Tray demo did not quit cleanly' }
+    if (!$script:app.WaitForExit(4000)) { throw 'Tray demo didn''t quit cleanly' }
     if ($script:app.ExitCode -ne 0) { throw "Tray demo failed on quit: $($script:app.ExitCode)" }
-    if (Test-Path (Join-Path $directory 'instance.port')) { throw 'Reopen listener did not clean up on quit' }
+    if (Test-Path (Join-Path $directory 'instance.port')) { throw 'Reopen listener didn''t clean up on quit' }
     Write-Host 'PASS: minimize and close hide Settings; relaunch restores the same window; configuration is preserved; quit cleans up the reopen listener.'
 } finally {
     if ($started -and !$script:app.HasExited) {

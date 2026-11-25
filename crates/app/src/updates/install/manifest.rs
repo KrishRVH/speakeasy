@@ -19,7 +19,7 @@ struct Manifest {
 #[cfg(target_os = "windows")]
 pub(super) fn key() -> anyhow::Result<[u8; 32]> {
     hex(include_str!("../../../../../packaging/update-key.pub").trim()).context(
-        "Verified updates are not configured in this build. Open the release page to update manually.",
+        "Verified updates aren't configured in this build. Open the release page to update manually.",
     )
 }
 

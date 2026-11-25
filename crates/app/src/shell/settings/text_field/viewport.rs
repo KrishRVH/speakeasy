@@ -110,7 +110,7 @@ mod tests {
         assert_eq!(
             view.offset,
             px(203.0),
-            "A later reveal did not replace the earlier one"
+            "A later reveal didn't replace the earlier one"
         );
         view = layout(view, caret, 40.0);
         assert_eq!(view.offset, px(263.0), "Resizing lost the revealed span");

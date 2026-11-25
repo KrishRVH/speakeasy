@@ -145,7 +145,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 wait_for(
                     settings,
                     Window::is_window_active,
-                    "The owned focus fixture did not activate",
+                    "The owned focus fixture didn't activate",
                     cx,
                 )
                 .await?;
@@ -201,7 +201,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 wait_for(
                     settings,
                     |window| !window.is_window_active(),
-                    "The second owned window did not activate",
+                    "The second owned window didn't activate",
                     cx,
                 )
                 .await?;
@@ -227,7 +227,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                 wait_for(
                     settings,
                     Window::is_window_active,
-                    "Settings did not reactivate",
+                    "Settings didn't reactivate",
                     cx,
                 )
                 .await?;
@@ -240,7 +240,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
                         view.permissions
                             .map(|snapshot| permissions::description(snapshot.microphone))
                             == Some("Allowed"),
-                        "Returning from system settings did not refresh microphone permission"
+                        "Returning from system settings didn't refresh microphone permission"
                     );
                     ensure!(
                         view.config.language == "auto",
@@ -275,7 +275,7 @@ fn native_settings_picker_restores_focus_and_close_clears_practice() -> anyhow::
     });
     outcome
         .try_recv()
-        .context("Native interaction acceptance did not complete")?
+        .context("Native interaction acceptance didn't complete")?
 }
 
 fn correction_undo(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyhow::Result<()> {
@@ -298,7 +298,7 @@ fn correction_undo(settings: WindowHandle<Settings>, cx: &mut AsyncApp) -> anyho
         };
         ensure!(
             heard(view) == ["x ray", "cube control"],
-            "Undo did not put a removed correction back in its place"
+            "Undo didn't put a removed correction back in its place"
         );
         view.edit_correction(vocabulary::Edit::Remove(0), window, cx);
         view.finish_save(
@@ -451,7 +451,7 @@ fn correct_from_practice(
         );
         ensure!(
             view.practiced_phrase().as_deref() == Some("private practice"),
-            "Adjacent practice words did not become one phrase"
+            "Adjacent practice words didn't become one phrase"
         );
         ensure!(
             view.vocabulary.addition_heard(cx).is_empty(),
@@ -460,7 +460,7 @@ fn correct_from_practice(
         let practiced = view.vocabulary.practiced().clone();
         ensure!(
             gpui::Focusable::focus_handle(practiced.read(cx), cx).is_focused(window),
-            "The correction did not wait for what to write"
+            "The correction didn't wait for what to write"
         );
         practiced.update(cx, |field, cx| field.set_text("Speakeasy".into(), cx));
         let before = view.config.vocabulary.len();
@@ -474,7 +474,7 @@ fn correct_from_practice(
                 && view.config.vocabulary.last().is_some_and(|rule| {
                     rule.heard == "private practice" && rule.written == "Speakeasy"
                 }),
-            "Adding from practice did not save the picked phrase"
+            "Adding from practice didn't save the picked phrase"
         );
         ensure!(
             view.practice.text.is_empty()
@@ -585,7 +585,7 @@ pub(super) fn activate(window: &gpui::Window) -> anyhow::Result<()> {
             };
             let RawWindowHandle::Xcb(owned) = HasWindowHandle::window_handle(window)?.as_raw()
             else {
-                anyhow::bail!("The owned fixture is not an XCB window");
+                anyhow::bail!("The owned fixture isn't an XCB window");
             };
             let (connection, _) = XCBConnection::connect(None)?;
             connection

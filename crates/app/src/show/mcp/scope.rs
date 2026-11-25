@@ -37,7 +37,7 @@ impl Roots {
                         .ok()
                         .filter(|root| root.is_dir())
                         .ok_or_else(|| {
-                            format!("MCP root {} is not an existing folder", root.display())
+                            format!("MCP root {} isn't an existing folder", root.display())
                         })
                 })
                 .collect::<Result<_, _>>()?,

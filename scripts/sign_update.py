@@ -30,7 +30,7 @@ def sign_update(installer: Path, version: str, public_key: Path, private_key: Pa
         ["pkey", "-in", str(private_key), "-passin", "pass:", "-pubout", "-outform", "DER"]
     )
     if actual != ED25519_SPKI + bytes.fromhex(embedded):
-        raise ValueError("The update signing key does not match the application's embedded key.")
+        raise ValueError("The update signing key doesn't match the application's embedded key.")
     if installer.name != NAME:
         raise ValueError(f"Sign the packaged Windows installer named {NAME}.")
     with installer.open("rb") as source:
@@ -68,7 +68,7 @@ def sign_update(installer: Path, version: str, public_key: Path, private_key: Pa
             ]
         )
         if len(signed) != 64:
-            raise ValueError("The update signature is not Ed25519.")
+            raise ValueError("The update signature isn't Ed25519.")
         staged_signature = Path(temporary) / "update.json.sig"
         staged_signature.write_bytes(signed)
         staged_signature.replace(signature)

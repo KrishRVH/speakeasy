@@ -69,13 +69,13 @@ fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
                 wait_for(
                     window,
                     gpui::Window::is_window_active,
-                    "The phrase editor did not activate",
+                    "The phrase editor didn't activate",
                     cx,
                 )
                 .await?;
                 window.update(cx, |field, window, cx| {
                     let bounds = field.bounds_for_range(8..11, Bounds::default(), window, cx);
-                    ensure!(bounds.is_some(), "The field did not shape its text");
+                    ensure!(bounds.is_some(), "The field didn't shape its text");
                     field.focus_handle(cx).focus(window, cx);
                     field.set_text("ab".into(), cx);
                     anyhow::Ok(())
@@ -113,7 +113,7 @@ fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
                     );
                     ensure!(
                         field.text() == "abæ仮",
-                        "Tab did not commit the composed text"
+                        "Tab didn't commit the composed text"
                     );
                     field.replace_and_mark_text_in_range(None, "にほ", None, window, cx);
                     anyhow::Ok(())
@@ -144,7 +144,7 @@ fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
                     );
                     ensure!(
                         field.text() == "abæ仮日本名",
-                        "Blur did not commit the composed text"
+                        "Blur didn't commit the composed text"
                     );
                     window.remove_window();
                     anyhow::Ok(())
@@ -159,7 +159,7 @@ fn native_phrase_editor_handles_ime() -> anyhow::Result<()> {
     });
     outcome
         .try_recv()
-        .context("Phrase editor acceptance did not complete")?
+        .context("Phrase editor acceptance didn't complete")?
 }
 
 fn synthetic_field(

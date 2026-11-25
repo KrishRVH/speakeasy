@@ -233,7 +233,7 @@ mod native {
             ensure!(frame.part == part, "Owned capture changed its fixed region");
             ensure!(
                 frame.at <= Instant::now() && previous.is_none_or(|last| frame.at > last),
-                "Native timestamps are not monotonic presentation times"
+                "Native timestamps aren't monotonic presentation times"
             );
             previous = Some(frame.at);
             let pixels = frame.image.pixels().as_chunks::<4>().0;
@@ -281,7 +281,7 @@ mod native {
             BufReader::new(readiness).read_line(&mut ready)?;
             ensure!(
                 ready.trim() == "ready",
-                "Synthetic window did not become ready"
+                "Synthetic window didn't become ready"
             );
             Ok(source)
         }

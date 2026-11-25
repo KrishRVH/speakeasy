@@ -13,7 +13,7 @@ const RECLAIM_SLACK_BYTES: usize = 8 * 1024 * 1024;
 const INCOMPLETE_HEADER: &str = "Recording header is incomplete. Try recording again.";
 const UNSUPPORTED_FORMAT: &str =
     "Recording format is unsupported. Choose another microphone in Settings, then try again.";
-const MISPLACED_PIECE: &str = "Recording piece does not fit the recording. Try recording again.";
+const MISPLACED_PIECE: &str = "Recording piece doesn't fit the recording. Try recording again.";
 
 pub(super) struct Pcm16 {
     bytes: Vec<u8>,

@@ -108,7 +108,7 @@ mod tests {
             assert_eq!(
                 chosen(compositor, true),
                 Ok(DisplayServer::X11),
-                "Xwayland or X11 did not present for a compositor without layer shell"
+                "Xwayland or X11 didn't present for a compositor without layer shell"
             );
         }
         assert_eq!(chosen(without_layer_shell(), false), Err(NO_OVERLAY.into()));

@@ -80,7 +80,7 @@ async fn promoted_speech_replays_to_the_same_sealed_audio() -> anyhow::Result<()
         .chain(iter::repeat_n(0, SECOND))
         .collect();
     let (Some(live), Some(recovered)) = promote(speech).await? else {
-        anyhow::bail!("Speech before the cue was not sealed");
+        anyhow::bail!("Speech before the cue wasn't sealed");
     };
     assert!(recovered.wav == live.wav, "Replay changed sealed audio");
     assert_eq!(recovered.trimmed, live.trimmed);

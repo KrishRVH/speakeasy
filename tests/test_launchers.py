@@ -41,7 +41,7 @@ time.sleep(60)
     try:
         deadline = time.monotonic() + 5
         while not ready.exists():
-            assert time.monotonic() < deadline, "Public launcher fixture did not start"
+            assert time.monotonic() < deadline, "Public launcher fixture didn't start"
             time.sleep(0.01)
         descendant = int(child.read_text())
         stop(process)

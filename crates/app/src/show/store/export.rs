@@ -162,7 +162,7 @@ fn guide(
     )?;
     writeln!(
         out,
-        "This copy does not expire automatically. Keeping or deleting the original Show does not change this archive or extracted copies.\n\n## Contact sheets\n"
+        "This copy doesn't expire automatically. Keeping or deleting the original Show doesn't change this archive or extracted copies.\n\n## Contact sheets\n"
     )?;
     for (index, (name, _)) in manifest.sheets().enumerate() {
         writeln!(out, "- [Contact sheet {}]({name})", index.saturating_add(1))?;

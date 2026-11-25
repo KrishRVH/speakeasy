@@ -132,9 +132,9 @@ async fn started_child(root: &Path) -> anyhow::Result<PathBuf> {
         }
     })
     .await
-    .context("The setup child did not start")?;
+    .context("The setup child didn't start")?;
     let lock = root.join("child.lock");
-    ensure!(is_locked(&lock)?, "The setup child did not take its lock");
+    ensure!(is_locked(&lock)?, "The setup child didn't take its lock");
     Ok(lock)
 }
 
@@ -174,7 +174,7 @@ async fn install_chooses_an_engine_that_recognizes_fixture_speech() -> anyhow::R
 
     assert!(
         result?.to_lowercase().contains("ask not what your country"),
-        "Fixture recognition did not contain the expected phrase"
+        "Fixture recognition didn't contain the expected phrase"
     );
     Ok(())
 }

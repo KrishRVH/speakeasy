@@ -247,7 +247,7 @@ fn verify(progress: Progress, mode: Mode) -> anyhow::Result<()> {
     ensure!(progress.rendered, "Render callbacks stopped during drain");
     ensure!(
         progress.requested == (mode != Mode::Approved),
-        "Native quit requests did not match this case"
+        "Native quit requests didn't match this case"
     );
     Ok(())
 }

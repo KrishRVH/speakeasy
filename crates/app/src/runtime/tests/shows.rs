@@ -70,7 +70,7 @@ async fn a_silent_show_still_publishes_its_screen() -> anyhow::Result<()> {
     events.send(CaptureEvent::Finished(id, Ok(None))).await?;
     let (_, narration) = receive(&h.published).await?;
     assert_eq!(narration, Narration::default());
-    assert!(h.jobs.try_recv().is_err(), "Silence is not transcribed");
+    assert!(h.jobs.try_recv().is_err(), "Silence isn't transcribed");
     h.phase(Phase::Copied).await?;
     h.close().await
 }

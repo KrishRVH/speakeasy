@@ -79,7 +79,7 @@ function Close-Preview([Diagnostics.Process]$Preview) {
         if ($owner -ne $Preview.Id -or ![InstallerPreview]::PostThreadMessage($thread, 0x0012, [IntPtr]::Zero, [IntPtr]::Zero)) {
             throw "Couldn't close the owned preview."
         }
-        if (!$Preview.WaitForExit(10000)) { throw 'The owned preview did not exit.' }
+        if (!$Preview.WaitForExit(10000)) { throw 'The owned preview didn''t exit.' }
     } finally {
         if (!$Preview.HasExited) { $Preview.Kill(); [void]$Preview.WaitForExit(10000) }
         $Preview.Dispose()
@@ -97,10 +97,10 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
     $cleanup = [Collections.Generic.List[Management.Automation.ErrorRecord]]::new()
     try {
         $setup = Start-Process -FilePath $staged -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"", "/SPEAKEASYPARENT=$($parent.Id)", "/SPEAKEASYCONFIG=`"$configuration`"", '/SPEAKEASYDEMO=1' -PassThru
-        if ($setup.WaitForExit(1500)) { throw 'The installer did not wait for its parent.' }
+        if ($setup.WaitForExit(1500)) { throw 'The installer didn''t wait for its parent.' }
         if ((Get-FileHash -LiteralPath $image).Hash -ne $imageHash) { throw 'The installer replaced app files before its parent exited.' }
         if ($ReleaseParent) { $parent.Kill(); [void]$parent.WaitForExit(10000) }
-        if (!$setup.WaitForExit(45000)) { throw 'The update handoff did not finish within its deadline.' }
+        if (!$setup.WaitForExit(45000)) { throw 'The update handoff didn''t finish within its deadline.' }
         if (!$ReleaseParent) {
             $parent.Refresh()
             if ($setup.ExitCode -eq 0 -or $parent.HasExited -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) {
@@ -116,22 +116,22 @@ function Check-UpdateHandoff([bool]$ReleaseParent) {
         do {
             $launched = Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath -eq $image }
             if ($launched) { break }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'Successful update did not relaunch Speakeasy.' }
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'Successful update didn''t relaunch Speakeasy.' }
             Start-Sleep -Milliseconds 100
         } while ($true)
         if (@($launched).Count -ne 1 -or !$launched.CommandLine.Contains('--demo-tray') -or !$launched.CommandLine.Contains($configuration)) {
-            throw 'Update did not relaunch the exact app and selected configuration in demo mode.'
+            throw 'Update didn''t relaunch the exact app and selected configuration in demo mode.'
         }
         $preview = Open-Launched $launched
         if (!$preview) { throw 'The updated preview exited before it opened its window.' }
         do {
             $preview.Refresh()
-            if ($preview.HasExited -or [DateTime]::UtcNow -ge $deadline) { throw 'The updated preview did not open its window.' }
+            if ($preview.HasExited -or [DateTime]::UtcNow -ge $deadline) { throw 'The updated preview didn''t open its window.' }
             Start-Sleep -Milliseconds 100
         } while ($preview.MainWindowHandle -eq [IntPtr]::Zero)
         $observed = & (Join-Path $app 'speakeasy-cli.exe') --version
-        if ($LASTEXITCODE -ne 0 -or $observed -ne $version) { throw 'Upgrade did not install the current app version.' }
-        if ((Get-FileHash -LiteralPath $image).Hash -ne $currentImageHash) { throw 'Update did not install the current packaged GUI.' }
+        if ($LASTEXITCODE -ne 0 -or $observed -ne $version) { throw 'Upgrade didn''t install the current app version.' }
+        if ((Get-FileHash -LiteralPath $image).Hash -ne $currentImageHash) { throw 'Update didn''t install the current packaged GUI.' }
         Check-UserData
     } catch {
         $failure = $_
@@ -183,11 +183,11 @@ function Check-RunningAppProtection {
         do {
             $preview.Refresh()
             if ($preview.HasExited) { throw 'The installed demo exited before upgrade acceptance.' }
-            if ([DateTime]::UtcNow -ge $deadline) { throw 'The installed demo did not open its window.' }
+            if ([DateTime]::UtcNow -ge $deadline) { throw 'The installed demo didn''t open its window.' }
             Start-Sleep -Milliseconds 100
         } while ($preview.MainWindowHandle -eq [IntPtr]::Zero)
         $blocked = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
-        if ($blocked.ExitCode -ne 7) { throw "Upgrade did not refuse the running app before installation (exit $($blocked.ExitCode))." }
+        if ($blocked.ExitCode -ne 7) { throw "Upgrade didn't refuse the running app before installation (exit $($blocked.ExitCode))." }
         $blocked = Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
         if ($blocked.ExitCode -eq 0) { throw 'Uninstall accepted a running app.' }
         foreach ($file in 'unins000.exe', 'speakeasy-cli.exe') {
@@ -218,7 +218,7 @@ function Check-ConsoleImageProtection {
         $view = [InstallerPreview]::MapViewOfFile($mapping, 4, 0, 0, [UIntPtr]::Zero)
         if ($view -eq [IntPtr]::Zero) { throw "Couldn't map the owned CLI image." }
         $blocked = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/DIR=`"$app`"" -Wait -PassThru
-        if ($blocked.ExitCode -ne 7) { throw 'Upgrade did not refuse a mapped CLI image.' }
+        if ($blocked.ExitCode -ne 7) { throw 'Upgrade didn''t refuse a mapped CLI image.' }
         $blocked = Start-Process -FilePath (Join-Path $app 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART' -Wait -PassThru
         if ($blocked.ExitCode -eq 0 -or (Get-FileHash -LiteralPath $image).Hash -ne $imageHash) {
             throw 'Maintenance changed a mapped CLI image.'

@@ -20,7 +20,7 @@ async fn captured(h: &mut Harness) -> anyhow::Result<String> {
     h.observe(|snapshot| snapshot.for_script).await?;
     started
         .session
-        .context("Capture did not identify its session")
+        .context("Capture didn't identify its session")
 }
 
 impl Harness {
@@ -55,7 +55,7 @@ async fn only_a_captured_dictation_can_be_printed() -> anyhow::Result<()> {
     receive(&h.captures).await?;
     let token = started
         .session
-        .context("Start did not identify its session")?;
+        .context("Start didn't identify its session")?;
     let refused = receive(&h.print(token.clone())).await?;
     assert_eq!(refused.result, Disposition::Refused);
     assert!(refused.text.is_none());
@@ -114,7 +114,7 @@ async fn print_is_refused_until_the_user_turns_it_on() -> anyhow::Result<()> {
     receive(&h.captures).await?;
     let token = started
         .session
-        .context("Start did not identify its session")?;
+        .context("Start didn't identify its session")?;
     let printed = receive(&h.print(token)).await?;
     assert_eq!(printed.result, Disposition::Refused);
     assert!(!h.snapshot().for_script);

@@ -70,7 +70,7 @@ pub(super) fn read(sample: &IMFSample, stride: i32, size: [u32; 2]) -> anyhow::R
     let bytes = unsafe { std::slice::from_raw_parts(start, length) };
     let pixels = copy(bytes, offset, pitch, size)?;
     drop(lock);
-    BgraImage::new(size, pixels).context("Decoded video pixels do not match its canvas")
+    BgraImage::new(size, pixels).context("Decoded video pixels don't match its canvas")
 }
 
 fn copy(

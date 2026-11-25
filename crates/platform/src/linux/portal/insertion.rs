@@ -397,7 +397,7 @@ fn insert_direct(sender: Option<&mut ei::Sender>, request: &Insertion, external:
 const fn text_remedy(blocked: TextBlocked) -> Inserted {
     Inserted::Unavailable(match blocked {
         TextBlocked::Unsupported => {
-            "This desktop does not support direct text input. Set “Insert text by” to a Paste option in Settings."
+            "This desktop doesn't support direct text input. Set “Insert text by” to a Paste option in Settings."
         },
         TextBlocked::Paused => {
             "Direct text input is paused on this desktop. Set “Insert text by” to a Paste option in Settings."

@@ -254,7 +254,7 @@ fn a_refused_delivery_sends_nothing_and_leaves_a_paste_on_the_clipboard() -> any
         assert_eq!(
             native.clipboard == WRITTEN,
             delivery == Delivery::Paste,
-            "{delivery:?}: the dictation is not left to paste by hand"
+            "{delivery:?}: the dictation isn't left to paste by hand"
         );
     }
     Ok(())

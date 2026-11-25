@@ -378,7 +378,7 @@ fn the_drawing_hint_starts_as_a_show_records_or_after_its_notice_and_ends_with_i
     assert_eq!(
         draw_hint_until(&held, &hands_free, now, None),
         None,
-        "Hands-free dictation is not a Show"
+        "Hands-free dictation isn't a Show"
     );
     assert_eq!(
         draw_hint_until(&show, &snapshot(2, Phase::Starting, false), later, full),

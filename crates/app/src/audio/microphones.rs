@@ -40,7 +40,7 @@ impl MicrophoneScan {
             let result = devices.wait_for(Option::is_some).await?;
             result
                 .clone()
-                .context("Microphone enumeration did not finish")?
+                .context("Microphone enumeration didn't finish")?
                 .map_err(Into::into)
         })
     }

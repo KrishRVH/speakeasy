@@ -181,7 +181,7 @@ impl ClipboardAccess for Clipboard {
                 native.set_text(text)?;
                 ensure!(
                     native.get_text()? == text,
-                    "The X11 clipboard did not keep the copied text. Try Paste last dictation again."
+                    "The X11 clipboard didn't keep the copied text. Try Paste last dictation again."
                 );
                 Ok(())
             },

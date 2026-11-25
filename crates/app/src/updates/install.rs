@@ -26,7 +26,7 @@ mod tests;
 
 const DOWNLOAD_FAILED: &str =
     "Can't download the update. Check your connection and free disk space, then try again.";
-const INVALID_FILE: &str = "The downloaded installer does not match the authenticated release. Nothing was installed. Try again.";
+const INVALID_FILE: &str = "The downloaded installer doesn't match the authenticated release. Nothing was installed. Try again.";
 
 #[cfg(target_os = "windows")]
 pub(crate) type Download = Job<Installer>;

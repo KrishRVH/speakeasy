@@ -282,7 +282,7 @@ async fn an_unavailable_checkpoint_closes_empty_and_the_show_publishes_from_memo
         ..
     } = result
     else {
-        bail!("In-memory footage was not published");
+        bail!("In-memory footage wasn't published");
     };
     assert!(copied);
     let manifest = Manifest::parse(&fs::read(show.directory().join("show.json"))?)?;

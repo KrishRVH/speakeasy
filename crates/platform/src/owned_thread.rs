@@ -59,7 +59,7 @@ impl OwnedThread {
         runtime
             .spawn_blocking(move || self.join_blocking())
             .await
-            .map_err(|_join_failed| io::Error::other("The worker join task did not finish"))?
+            .map_err(|_join_failed| io::Error::other("The worker join task didn't finish"))?
     }
 
     fn join_blocking(mut self) -> io::Result<()> {
@@ -193,7 +193,7 @@ mod tests {
         assert_eq!(
             observed.recv_timeout(PATIENCE),
             Ok(()),
-            "Dropping the thread did not return"
+            "Dropping the thread didn't return"
         );
         Ok(())
     }

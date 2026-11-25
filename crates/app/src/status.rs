@@ -7,7 +7,7 @@ use crate::runtime::{LOADING, Snapshot};
 pub(crate) const PAUSING: &str = "Pausing dictation…";
 pub(crate) const PAUSED: &str = "Dictation paused";
 pub(crate) const QUITTING: &str = "Quitting Speakeasy…";
-pub(crate) const UNCONFIGURED: &str = "Speakeasy is not set up yet.";
+pub(crate) const UNCONFIGURED: &str = "Speakeasy isn't set up yet.";
 pub(crate) const RESETTING: &str = "Removing settings and downloads…";
 /// A failure with no narrower name; the message in Settings says what happened.
 const ATTENTION: &str = "Needs attention";

@@ -74,7 +74,7 @@ pub(crate) fn interval(duration: Duration) -> String {
 pub(crate) fn set_kept(parent: &Path, directory: &Path, kept: bool) -> io::Result<Retention> {
     let id = address::managed_id(parent, directory).ok_or_else(|| {
         io::Error::other(format!(
-            "Only Shows directly in {} expire; this folder is not managed",
+            "Only Shows directly in {} expire; this folder isn't managed",
             parent.display()
         ))
     })?;

@@ -63,7 +63,7 @@ fn evidence_reports_missing_and_untimed_narration_without_inventing_words() {
         ),
         (
             Narration::Lost(NarrationLoss::NotTranscribed),
-            "Recorded speech was not transcribed.",
+            "Recorded speech wasn't transcribed.",
         ),
         (
             Narration::Untimed {

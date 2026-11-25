@@ -261,7 +261,7 @@ fn persist(
         selection,
         |at| {
             anyhow::ensure!(!cancelled(), PUBLISH_STOPPED);
-            journal.frame_at(at).context("A keyframe was not recorded")
+            journal.frame_at(at).context("A keyframe wasn't recorded")
         },
         &typeface,
     );

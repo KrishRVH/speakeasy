@@ -477,7 +477,7 @@ mod tests {
 
     fn launch_mode(args: &[&str]) -> anyhow::Result<LaunchMode> {
         let Invocation::Launch { mode, .. } = parse(args)? else {
-            bail!("{args:?} did not launch the app");
+            bail!("{args:?} didn't launch the app");
         };
         Ok(mode)
     }

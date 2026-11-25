@@ -109,7 +109,7 @@ begin
     end;
   end;
   if not Result then
-    SuppressibleMsgBox('Speakeasy has not finished closing, or Windows couldn''t confirm it. Nothing was installed. Reopen Speakeasy and try the update again.', mbError, MB_OK, IDOK);
+    SuppressibleMsgBox('Speakeasy hasn''t finished closing, or Windows couldn''t confirm it. Nothing was installed. Reopen Speakeasy and try the update again.', mbError, MB_OK, IDOK);
 end;
 
 function AppFilesAvailable: Boolean;

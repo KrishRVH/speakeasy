@@ -73,7 +73,7 @@ async fn a_failed_save_lands_the_earlier_write_it_overtook() -> anyhow::Result<(
     let SaveProgress::Finished(SaveOutcome::Failed { earlier, .. }) =
         queue.finish(write_result(latest).await?)
     else {
-        bail!("The failing save did not fail");
+        bail!("The failing save didn't fail");
     };
     let earlier = earlier.context("The written save it overtook was dropped")?;
     assert_eq!(earlier.validated.threads, 4);
@@ -159,7 +159,7 @@ async fn a_draft_needs_saving_until_the_file_holds_it_or_a_write_is_making_it() 
     let SaveProgress::Finished(SaveOutcome::Failed { .. }) =
         queue.finish(write_result(write).await?)
     else {
-        bail!("The failing save did not fail");
+        bail!("The failing save didn't fail");
     };
     assert!(
         queue.needs_save(&unwritable),

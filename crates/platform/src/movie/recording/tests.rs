@@ -69,7 +69,7 @@ fn control() -> (MovieControl, MovieTarget) {
 
 async fn accept_first_frame(control: &MovieControl) -> anyhow::Result<()> {
     let Some(MovieEvent::Started { accepted, .. }) = control.next().await else {
-        anyhow::bail!("Synthetic movie did not request its origin");
+        anyhow::bail!("Synthetic movie didn't request its origin");
     };
     assert!(accepted.send(true).is_ok());
     let Some(MovieEvent::Geometry {
@@ -78,7 +78,7 @@ async fn accept_first_frame(control: &MovieControl) -> anyhow::Result<()> {
         ..
     }) = control.next().await
     else {
-        anyhow::bail!("Synthetic movie did not request its first content rectangle");
+        anyhow::bail!("Synthetic movie didn't request its first content rectangle");
     };
     assert!(accepted.send(true).is_ok());
     Ok(())
@@ -151,7 +151,7 @@ async fn a_quiet_screen_covers_no_more_than_the_recording_limit() -> anyhow::Res
         through, frames, ..
     }) = control.next().await
     else {
-        anyhow::bail!("Synthetic movie did not finish");
+        anyhow::bail!("Synthetic movie didn't finish");
     };
     assert_eq!((frames, through), (31, start.checked_add(LIMIT).unwrap()));
     Ok(())
@@ -194,14 +194,14 @@ async fn a_cancelled_active_movie_releases_its_file_without_a_new_frame() -> any
         }
     })?;
     let Some(crate::MovieEvent::Started { accepted, .. }) = control.next().await else {
-        anyhow::bail!("Synthetic movie did not request its origin");
+        anyhow::bail!("Synthetic movie didn't request its origin");
     };
     assert!(accepted.send(true).is_ok());
     let Some(crate::MovieEvent::Geometry {
         sample, accepted, ..
     }) = control.next().await
     else {
-        anyhow::bail!("Synthetic movie did not request its content rectangle");
+        anyhow::bail!("Synthetic movie didn't request its content rectangle");
     };
     assert_eq!(sample, 0);
     assert!(accepted.send(true).is_ok());

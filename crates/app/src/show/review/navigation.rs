@@ -133,8 +133,8 @@ pub(super) fn pointer(
         format!("{}\n", request.caption(frame, sampled))
     });
     format!(
-        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby frames do \
-         not prove a missing moment.\n",
+        "Show folder: {}\n{sample}\n{request}A frame shows its own timestamp; nearby frames don't \
+         prove a missing moment.\n",
         code(directory)
     )
 }

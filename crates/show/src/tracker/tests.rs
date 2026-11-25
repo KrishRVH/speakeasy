@@ -146,7 +146,7 @@ fn pins_drop_where_the_pointer_was_last_seen_on_the_surface_after_two_clean_taps
     let t = &mut tracker;
     assert!(
         !t.pin(Span::at(Moment::START)),
-        "The pointer has not been seen"
+        "The pointer hasn't been seen"
     );
     let (first, second) = (clean(t, 0, 0.3), clean(t, 160, 0.3));
     assert!(pin(t, first, second));

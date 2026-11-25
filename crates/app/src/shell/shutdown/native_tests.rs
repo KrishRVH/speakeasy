@@ -75,7 +75,7 @@ fn handoff(quit: Quit) -> anyhow::Result<()> {
                 cx.global::<Services>().installation,
                 Some(Installation::Waiting(_))
             ),
-            "installation cannot arm synchronously before cleanup"
+            "installation can't arm synchronously before cleanup"
         );
         match quit {
             Quit::Forced => cx.quit(),
@@ -104,7 +104,7 @@ fn handoff(quit: Quit) -> anyhow::Result<()> {
         Quit::Forced => {
             assert!(
                 received.is_none(),
-                "forced Quit cannot install before graceful drain"
+                "forced Quit can't install before graceful drain"
             );
             assert!(!path.exists(), "unarmed staging is reclaimed");
         },

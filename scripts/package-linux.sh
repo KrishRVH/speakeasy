@@ -49,7 +49,7 @@ install -Dm644 crates/show/NOTICE.md "$app_dir/usr/share/licenses/speakeasy/NOTI
 } > "$app_dir/BUILD.txt"
 if [[ "$native" == true ]]; then
   tar -C "$staging" -czf artifacts/speakeasy-linux-x86_64-native.tar.gz Speakeasy.AppDir
-  echo "Built a native tar archive for this machine; dependencies are not bundled."
+  echo "Built a native tar archive for this machine; dependencies aren't bundled."
   exit 0
 fi
 deploy="$staging/linuxdeploy.AppImage"
@@ -61,7 +61,7 @@ export APPIMAGE_EXTRACT_AND_RUN=1
 # AppRun leaves LD_LIBRARY_PATH alone, so bundled libraries resolve only through this RUNPATH.
 dynamic=$(readelf -d "$app_dir/usr/bin/speakeasy")
 if [[ "$dynamic" != *"(RUNPATH)"*"[\$ORIGIN/../lib]"* ]]; then
-  echo "linuxdeploy did not set RUNPATH \$ORIGIN/../lib on usr/bin/speakeasy" >&2
+  echo "linuxdeploy didn't set RUNPATH \$ORIGIN/../lib on usr/bin/speakeasy" >&2
   exit 1
 fi
 # Check bundled ELF dependencies as well as the app against the same ABI floor. find lists every

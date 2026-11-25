@@ -33,7 +33,7 @@ use super::{
 
 pub const APPLICATION_ID: &str = "io.github.krvh.speakeasy";
 
-pub(crate) const SHOWS_UNSUPPORTED: &str = "Shows are not available on Linux yet";
+pub(crate) const SHOWS_UNSUPPORTED: &str = "Shows aren't available on Linux yet";
 
 const NO_PASTE_BINDING: Inserted = Inserted::Copied(
     "Text copied. This keyboard layout has no automatic paste binding; paste manually.",
@@ -375,7 +375,7 @@ mod tests {
         tokio::time::timeout(PATIENCE, thread.exited()).await?;
         match received.try_recv() {
             Ok(Input::Unavailable(reason)) => assert_eq!(reason, DESKTOP_STOPPED),
-            other => anyhow::bail!("The panicked desktop thread did not report why: {other:?}"),
+            other => anyhow::bail!("The panicked desktop thread didn't report why: {other:?}"),
         }
         assert!(input.is_closed());
         Ok(())

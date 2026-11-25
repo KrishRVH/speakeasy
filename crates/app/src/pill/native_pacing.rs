@@ -28,9 +28,7 @@ pub(super) fn run_native(
         })
         .detach();
     });
-    outcome
-        .try_recv()
-        .context("Native check did not complete")?
+    outcome.try_recv().context("Native check didn't complete")?
 }
 
 #[expect(

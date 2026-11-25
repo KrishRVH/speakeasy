@@ -177,7 +177,7 @@ fn exports_start_with_earlier_voice_and_keep_a_partial_last_frame() -> anyhow::R
     movie::tests::checkpoint(checkpoint.path(), true)?;
     movie::retain(
         show.path(),
-        movie::open(checkpoint.path())?.context("The fixture movie was not kept")?,
+        movie::open(checkpoint.path())?.context("The fixture movie wasn't kept")?,
         annotations,
     )?;
     let reading = movie::Reading::open(show.path(), annotations)?;
@@ -270,7 +270,7 @@ fn fixture(root: &Path) -> anyhow::Result<PathBuf> {
         4,
         true,
     )?;
-    let reading = movie::open(checkpoint.path())?.context("Synthetic movie was not retained")?;
+    let reading = movie::open(checkpoint.path())?.context("Synthetic movie wasn't retained")?;
     movie::retain(&directory, reading, Moment::from_millis(2250))?;
     fs::write(
         directory.join(Manifest::FILE),

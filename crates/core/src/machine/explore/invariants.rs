@@ -21,7 +21,7 @@ pub(super) fn state(machine: &Machine<Abstract>, settled: bool) -> Result<(), St
     }
     if let Some(session) = session {
         if session.id != machine.latest.id {
-            return Err("The session is not the latest one".into());
+            return Err("The session isn't the latest one".into());
         }
         if session.is_capturing()
             && gesture != State::Processing
@@ -94,7 +94,7 @@ pub(super) fn transition(
                 return Err("A delivery started without a session to own it".into());
             };
             if !session.awaits_delivery() {
-                return Err("A delivery started but its session does not await it".into());
+                return Err("A delivery started but its session doesn't await it".into());
             }
             let settled = matches!(event, Event::Delivered(_))
                 || effects
@@ -125,14 +125,14 @@ pub(super) fn transition(
         .any(|effect| matches!(effect, Effect::Answered(Query::Practise, _)))
     {
         if !before.session.as_ref().is_some_and(Session::is_practice) {
-            return Err("Practice text came from a session that was not practising".into());
+            return Err("Practice text came from a session that wasn't practising".into());
         }
         if after.session.is_some() {
             return Err("A practice session survived handing over its text".into());
         }
     }
     if matches!(after.outcome, Outcome::Withheld(())) && after.last_dictation.is_none() {
-        return Err("A withheld dictation is not kept for Paste last".into());
+        return Err("A withheld dictation isn't kept for Paste last".into());
     }
     if let (Some(earlier), Some(later)) = (before.remembered, after.remembered)
         && later < earlier

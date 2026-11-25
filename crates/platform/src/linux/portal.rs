@@ -147,7 +147,7 @@ impl Portal {
         let actual = String::try_from(
             result
                 .remove("session_handle")
-                .context("Portal did not create a session")?,
+                .context("Portal didn't create a session")?,
         )?;
         ensure!(
             actual == predicted.as_str(),
@@ -387,11 +387,11 @@ async fn start_remote_desktop(
         .await?;
     let granted: u32 = result
         .remove("devices")
-        .context("Keyboard permission was not granted")?
+        .context("Keyboard permission wasn't granted")?
         .try_into()?;
     ensure!(
         granted & KEYBOARD_DEVICE != 0,
-        "Keyboard permission was not granted"
+        "Keyboard permission wasn't granted"
     );
     if let Some(store) = tokens
         && let Some(token) = result

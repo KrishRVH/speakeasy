@@ -426,7 +426,7 @@ mod tests {
         assert_eq!(
             reopened.displays_changed(true).closed(),
             PillSurface::Reopened,
-            "A display change did not let the pill reopen again"
+            "A display change didn't let the pill reopen again"
         );
     }
 }

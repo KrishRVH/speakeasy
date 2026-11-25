@@ -40,7 +40,7 @@ async fn a_blocked_focus_query_stays_off_the_caller_and_never_touches_clipboard_
     worker.ready().await?;
     let mut target = std::pin::pin!(worker.external_target(permit));
     tokio::select! {
-        result = &mut target => bail!("Focus did not block: {result:?}"),
+        result = &mut target => bail!("Focus didn't block: {result:?}"),
         started = tokio::time::timeout(PATIENCE, blocked.recv()) => {
             started??;
         },

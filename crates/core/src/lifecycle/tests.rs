@@ -111,7 +111,7 @@ fn a_pause_after_save_keeps_dictation_off_unless_resumed() {
     assert_eq!(lifecycle.retired(), Some(()));
     assert!(
         lifecycle.save_may_enable(|()| false),
-        "A restart that applies settings is not a user pause"
+        "A restart that applies settings isn't a user pause"
     );
 }
 

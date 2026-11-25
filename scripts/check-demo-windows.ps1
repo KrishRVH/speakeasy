@@ -42,7 +42,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
             if ($null -ne $found) { return $found }
             Start-Sleep -Milliseconds 50
         } while ([DateTime]::UtcNow -lt $deadline)
-        throw 'Accessible control did not appear'
+        throw 'Accessible control didn''t appear'
     }
     function Invoke-Control($Control) {
         $pattern = $null
@@ -62,13 +62,13 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     }
     $dictation = Wait-Control 'Dictation'
     if ($dictation.Current.ControlType -ne [Windows.Automation.ControlType]::TabItem) {
-        throw 'Settings page does not expose a tab role'
+        throw 'Settings page doesn''t expose a tab role'
     }
     $selected = $null
     if (!$dictation.TryGetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern, [ref]$selected)) {
         throw 'Settings tab has no selection pattern'
     }
-    if (!$selected.Current.IsSelected) { throw 'Current page is not exposed as selected' }
+    if (!$selected.Current.IsSelected) { throw 'Current page isn''t exposed as selected' }
     $microphone = Wait-Control 'Microphone: System default'
     Invoke-Control $microphone
     $list = New-Object Windows.Automation.AndCondition (
@@ -76,7 +76,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
         (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::NameProperty), 'Microphone'))
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     do { $menu = $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $list) } while ($null -eq $menu -and [DateTime]::UtcNow -lt $deadline)
-    if ($null -eq $menu) { throw 'Accessible invocation did not open the microphone menu' }
+    if ($null -eq $menu) { throw 'Accessible invocation didn''t open the microphone menu' }
     Invoke-Control $microphone
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ($null -ne $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $list) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
@@ -89,7 +89,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $toggle.Toggle()
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ($toggle.Current.ToggleState -eq $previousToggle -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if ($toggle.Current.ToggleState -eq $previousToggle) { throw 'Accessible switch did not toggle' }
+    if ($toggle.Current.ToggleState -eq $previousToggle) { throw 'Accessible switch didn''t toggle' }
     $radios = $root.FindAll([Windows.Automation.TreeScope]::Descendants,
         (New-Object Windows.Automation.PropertyCondition ([Windows.Automation.AutomationElement]::ControlTypeProperty), ([Windows.Automation.ControlType]::RadioButton)))
     $theme = $radios | Where-Object {
@@ -101,7 +101,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $choice.Select()
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while (!$choice.Current.IsSelected -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if (!$choice.Current.IsSelected) { throw 'Accessible selection did not change theme' }
+    if (!$choice.Current.IsSelected) { throw 'Accessible selection didn''t change theme' }
     $words = Wait-Control 'Words'
     $selectWords = $words.GetCurrentPattern([Windows.Automation.SelectionItemPattern]::Pattern)
     $selectWords.Select()
@@ -111,7 +111,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $heard.SetFocus()
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while (!$heard.Current.HasKeyboardFocus -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if (!$heard.Current.HasKeyboardFocus) { throw 'Accessible focus did not reach the field' }
+    if (!$heard.Current.HasKeyboardFocus) { throw 'Accessible focus didn''t reach the field' }
     $value = $null
     if (!$heard.TryGetCurrentPattern([Windows.Automation.ValuePattern]::Pattern, [ref]$value)) {
         throw 'Editable field has no value pattern'
@@ -120,7 +120,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     $value.SetValue($synthetic)
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ($value.Current.Value -ne $synthetic -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if ($value.Current.Value -ne $synthetic) { throw 'Accessible Unicode editing did not reach the field' }
+    if ($value.Current.Value -ne $synthetic) { throw 'Accessible Unicode editing didn''t reach the field' }
     $value.SetValue(('x' * 2049))
     Start-Sleep -Milliseconds 200
     if ($value.Current.Value -ne $synthetic) { throw 'Accessible input bypassed the field size limit' }
@@ -140,7 +140,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     if (![DemoWindows]::GetWindowRect($Window, [ref]$frame) -or ![DemoWindows]::ClientToScreen($Window, [ref]$origin)) {
         throw "Couldn't read owned window geometry"
     }
-    if ($origin.X -eq $originBefore.X -and $origin.Y -eq $originBefore.Y) { throw 'Owned window did not move' }
+    if ($origin.X -eq $originBefore.X -and $origin.Y -eq $originBefore.Y) { throw 'Owned window didn''t move' }
     $bounds = $root.Current.BoundingRectangle
     if ([Math]::Abs($bounds.X - $frame.Left) -gt 1 -or [Math]::Abs($bounds.Y - $frame.Top) -gt 1 -or
         [Math]::Abs($bounds.Width - ($frame.Right - $frame.Left)) -gt 1 -or
@@ -151,7 +151,7 @@ function Test-DemoAccessibility([IntPtr]$Window, [int]$Owner) {
     if ([Math]::Abs(($field.X - $fieldBefore.X) - ($origin.X - $originBefore.X)) -gt 1 -or
         [Math]::Abs(($field.Y - $fieldBefore.Y) - ($origin.Y - $originBefore.Y)) -gt 1 -or
         [Math]::Abs($field.Width - $fieldBefore.Width) -gt 1 -or [Math]::Abs($field.Height - $fieldBefore.Height) -gt 1) {
-        throw 'Field bounds did not follow the moved native client'
+        throw 'Field bounds didn''t follow the moved native client'
     }
     $null = [DemoWindows]::ShowWindow($Window, 0)
     Start-Sleep -Milliseconds 200
@@ -204,7 +204,7 @@ public sealed class TextEventCounts : IDisposable {
         $value.SetValue($Content)
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while ($text.DocumentRange.GetText(-1) -ne $Content -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
-        if ($text.DocumentRange.GetText(-1) -ne $Content) { throw 'DocumentRange did not track the bounded field value' }
+        if ($text.DocumentRange.GetText(-1) -ne $Content) { throw 'DocumentRange didn''t track the bounded field value' }
     }
     $Field.SetFocus()
     $events = New-Object TextEventCounts $Field
@@ -220,7 +220,7 @@ public sealed class TextEventCounts : IDisposable {
         Set-Text $unicode
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while ($events.Changed -le $beforeReplacement -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
-        if ($events.Changed -le $beforeReplacement) { throw 'Replacing identical text did not raise TextChanged' }
+        if ($events.Changed -le $beforeReplacement) { throw 'Replacing identical text didn''t raise TextChanged' }
         $document = $text.DocumentRange
         $range = $document.Clone()
         $range.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $document, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
@@ -231,8 +231,8 @@ public sealed class TextEventCounts : IDisposable {
         $range.Select()
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while (($text.GetSelection()[0].GetText(-1) -ne $rocket -or $events.Selected -le $beforeSelection) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 30 }
-        if ($text.GetSelection()[0].GetText(-1) -ne $rocket) { throw 'Native text selection did not reach the editor' }
-        if ($events.Selected -le $beforeSelection) { throw 'Native text selection event was not raised' }
+        if ($text.GetSelection()[0].GetText(-1) -ne $rocket) { throw 'Native text selection didn''t reach the editor' }
+        if ($events.Selected -le $beforeSelection) { throw 'Native text selection event wasn''t raised' }
 
         foreach ($grapheme in @($accented, $emoji)) {
             $null = $range.Move([Windows.Automation.Text.TextUnit]::Character, 1)
@@ -258,7 +258,7 @@ public sealed class TextEventCounts : IDisposable {
         $value.SetValue('Restored field')
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while (!$Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
-        if (!$Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { throw 'TextPattern did not return after an oversized grapheme' }
+        if (!$Field.TryGetCurrentPattern([Windows.Automation.TextPattern]::Pattern, [ref]$pattern)) { throw 'TextPattern didn''t return after an oversized grapheme' }
         $text = $pattern
 
         $long = ('a' * 260) + ' ' + $rocket + ' end'
@@ -273,12 +273,12 @@ public sealed class TextEventCounts : IDisposable {
         if ($word.GetText(-1).TrimEnd() -ne ('a' * 260)) { throw 'Word navigation split a word at a text-run boundary' }
         $visible = $text.GetVisibleRanges()
         if ($visible.Count -ne 1 -or [string]::IsNullOrEmpty($visible[0].GetText(-1))) { throw 'Scrolled field has no single continuous visible text range' }
-        if ($visible[0].GetText(-1).Length -ge $long.Length -or !$visible[0].GetText(-1).EndsWith(' end')) { throw 'Visible range does not match the scrolled suffix' }
+        if ($visible[0].GetText(-1).Length -ge $long.Length -or !$visible[0].GetText(-1).EndsWith(' end')) { throw 'Visible range doesn''t match the scrolled suffix' }
         $rectangles = $document.GetBoundingRectangles()
         if ($rectangles.Count -ne 1) { throw 'One scrolled line must have one visible rectangle' }
         $viewport = $Field.Current.BoundingRectangle
         $rect = $rectangles[0]
-        if ([Math]::Abs($rect.Left - $viewport.Left) -gt 1 -or $rect.Right -gt $viewport.Right + 1 -or $rect.Top -lt $viewport.Top - 1 -or $rect.Bottom -gt $viewport.Bottom + 1) { throw 'Text geometry escaped or did not reach the actual paint clip' }
+        if ([Math]::Abs($rect.Left - $viewport.Left) -gt 1 -or $rect.Right -gt $viewport.Right + 1 -or $rect.Top -lt $viewport.Top - 1 -or $rect.Bottom -gt $viewport.Bottom + 1) { throw 'Text geometry escaped or didn''t reach the actual paint clip' }
         $hidden = $document.Clone()
         $hidden.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $document, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
         $null = $hidden.MoveEndpointByUnit([Windows.Automation.Text.TextPatternRangeEndpoint]::End, [Windows.Automation.Text.TextUnit]::Character, 2)
@@ -289,7 +289,7 @@ public sealed class TextEventCounts : IDisposable {
         $hit = $text.RangeFromPoint((New-Object Windows.Point ($rect.Right - 3), (($rect.Top + $rect.Bottom) / 2)))
         $hit.ExpandToEnclosingUnit([Windows.Automation.Text.TextUnit]::Character)
         if ([string]::IsNullOrEmpty($hit.GetText(-1))) { throw 'Text hit testing failed in the visible line' }
-        if ($events.Changed -eq 0) { throw 'Native text change event was not raised' }
+        if ($events.Changed -eq 0) { throw 'Native text change event wasn''t raised' }
         function New-TextRange([int]$Start, [int]$End) {
             $result = $text.DocumentRange.Clone()
             $result.MoveEndpointByRange([Windows.Automation.Text.TextPatternRangeEndpoint]::End, $result, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start)
@@ -305,14 +305,14 @@ public sealed class TextEventCounts : IDisposable {
                 if ($visiblePolls -ge 3) { return }
                 Start-Sleep -Milliseconds 20
             }
-            throw "ScrollIntoView did not reveal the requested text: $Phase"
+            throw "ScrollIntoView didn't reveal the requested text: $Phase"
         }
         $selection = New-TextRange 210 215
         $selection.Select()
         $deadline = [DateTime]::UtcNow.AddSeconds(5)
         while ($text.GetSelection()[0].CompareEndpoints([Windows.Automation.Text.TextPatternRangeEndpoint]::Start, $selection, [Windows.Automation.Text.TextPatternRangeEndpoint]::Start) -ne 0 -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
         $selected = $text.GetSelection()[0].Clone()
-        if (!$Field.Current.HasKeyboardFocus -or $selected.GetText(-1).Length -ne 5) { throw 'Scroll fixture did not establish a focused selection' }
+        if (!$Field.Current.HasKeyboardFocus -or $selected.GetText(-1).Length -ne 5) { throw 'Scroll fixture didn''t establish a focused selection' }
         $first = New-TextRange 5 6
         $later = New-TextRange 200 201
         $first.ScrollIntoView($true)
@@ -338,7 +338,7 @@ public sealed class TextEventCounts : IDisposable {
         function Wait-Width([scriptblock]$Reached, [string]$Phase) {
             $deadline = [DateTime]::UtcNow.AddSeconds(5)
             while (!(& $Reached $Field.Current.BoundingRectangle.Width) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 20 }
-            if (!(& $Reached $Field.Current.BoundingRectangle.Width)) { throw "Owned field did not resize: $Phase" }
+            if (!(& $Reached $Field.Current.BoundingRectangle.Width)) { throw "Owned field didn't resize: $Phase" }
         }
         $width = $Field.Current.BoundingRectangle.Width
         $resize.Invoke()
@@ -380,7 +380,7 @@ function Test-StaticAccessibility([IntPtr]$Window) {
             if ($null -ne $field) { return $field }
             Start-Sleep -Milliseconds 50
         } while ([DateTime]::UtcNow -lt $deadline)
-        throw "Static accessible field did not appear during $Phase"
+        throw "Static accessible field didn't appear during $Phase"
     }
     Start-Sleep -Milliseconds 200
     if ($null -ne $root.FindFirst([Windows.Automation.TreeScope]::Descendants, $condition)) {
@@ -460,7 +460,7 @@ try {
             $null = [DemoWindows]::EnumWindows($callback, [IntPtr]::Zero)
             Start-Sleep -Milliseconds 50
         }
-        if ($script:settings -eq [IntPtr]::Zero) { throw 'Static accessibility fixture did not open' }
+        if ($script:settings -eq [IntPtr]::Zero) { throw 'Static accessibility fixture didn''t open' }
         $script:staticProvider = Test-StaticAccessibility $script:settings
         return
     }
@@ -470,7 +470,7 @@ try {
         $null = [DemoWindows]::EnumWindows($callback, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 100
     }
-    if ($script:pill -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:pill)) { throw 'Pill window did not appear' }
+    if ($script:pill -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:pill)) { throw 'Pill window didn''t appear' }
     Start-Sleep -Milliseconds 750
     if ($process.HasExited -or ![DemoWindows]::IsWindowVisible($script:pill)) { throw 'Pill disappeared before hit testing' }
     if ([DemoWindows]::GetForegroundWindow() -eq $script:pill) { throw 'Pill took foreground focus' }
@@ -487,11 +487,11 @@ try {
         $null = [DemoWindows]::EnumWindows($callback, [IntPtr]::Zero)
         Start-Sleep -Milliseconds 100
     }
-    if ($script:shows -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows window did not appear' }
+    if ($script:shows -eq [IntPtr]::Zero -or ![DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows window didn''t appear' }
     $null = [DemoWindows]::PostMessage($script:shows, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
     $deadline = [DateTime]::UtcNow.AddSeconds(5)
     while ([DemoWindows]::IsWindowVisible($script:shows) -and [DateTime]::UtcNow -lt $deadline) { Start-Sleep -Milliseconds 50 }
-    if ([DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows did not close' }
+    if ([DemoWindows]::IsWindowVisible($script:shows)) { throw 'Shows didn''t close' }
     if ($process.HasExited -or ![DemoWindows]::IsWindowVisible($script:settings)) { throw 'Closing Shows also closed Settings' }
     Test-DemoAccessibility $script:settings $script:demoProcess
     Write-Host 'PASS: demo pill stays passive; Shows opens and closes without quitting Settings.'
@@ -503,7 +503,7 @@ try {
         $null = [DemoWindows]::PostMessage($script:settings, 0x0010, [IntPtr]::Zero, [IntPtr]::Zero)
         if (!$process.WaitForExit(4000)) {
             $process.Kill(); $process.WaitForExit()
-            throw 'Demo did not quit after Settings closed'
+            throw 'Demo didn''t quit after Settings closed'
         }
     }
     if ($started -and $process.ExitCode -ne 0) { throw 'Owned accessibility process failed' }

@@ -16,7 +16,7 @@ pub(super) fn emit_record<E: From<SourceError>>(
     emit: &mut impl FnMut(&[u8]) -> Result<(), E>,
 ) -> Result<(), E> {
     let length =
-        u32::try_from(data.len()).map_err(|_out_of_range| SourceError("record is too large"))?;
+        u32::try_from(data.len()).map_err(|_out_of_range| SourceError("Record is too large"))?;
     emit(&length.to_le_bytes())?;
     emit(&[kind])?;
     emit(data)?;
@@ -39,17 +39,17 @@ pub(super) fn payload(record: &[u8], kind: u8) -> Result<&[u8], SourceError> {
     let mut cursor = Cursor(record);
     let length = cursor.usize()?;
     let actual = cursor.take::<1>()?;
-    require(actual == [kind], "record kind is unsupported")?;
+    require(actual == [kind], "Record kind is unsupported")?;
     require(
         cursor.0.len() == length.saturating_add(4),
-        "record length is invalid",
+        "Record length is invalid",
     )?;
     let data = cursor.data(length)?;
     let expected = cursor.word()?;
     let mut crc = crc32fast::Hasher::new();
     crc.update(&actual);
     crc.update(data);
-    require(crc.finalize() == expected, "record checksum failed")?;
+    require(crc.finalize() == expected, "Record checksum failed")?;
     Ok(data)
 }
 
@@ -60,7 +60,7 @@ impl<'a> Cursor<'a> {
         let (head, rest) = self
             .0
             .split_first_chunk::<N>()
-            .ok_or(SourceError("record is truncated"))?;
+            .ok_or(SourceError("Record is truncated"))?;
         self.0 = rest;
         Ok(*head)
     }
@@ -81,7 +81,7 @@ impl<'a> Cursor<'a> {
         let count = self.usize()?;
         require(
             count <= limit && count <= self.0.len().checked_div(item_bytes).unwrap_or(0),
-            "record count is invalid",
+            "Record count is invalid",
         )?;
         Ok(count)
     }
@@ -90,7 +90,7 @@ impl<'a> Cursor<'a> {
         let (head, tail) = self
             .0
             .split_at_checked(length)
-            .ok_or(SourceError("record is truncated"))?;
+            .ok_or(SourceError("Record is truncated"))?;
         self.0 = tail;
         Ok(head)
     }

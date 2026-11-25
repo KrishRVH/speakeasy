@@ -58,7 +58,7 @@ impl Bus {
         if address.is_empty() {
             let output = daemon.wait_with_output()?;
             bail!(
-                "Private D-Bus did not start: {}",
+                "Private D-Bus didn't start: {}",
                 String::from_utf8_lossy(&output.stderr).trim()
             );
         }
@@ -73,7 +73,7 @@ impl Bus {
         let connecting = Builder::address(self.address.as_str())?.build();
         Ok(tokio::time::timeout(PATIENCE, connecting)
             .await
-            .context("The private bus did not accept a connection")??)
+            .context("The private bus didn't accept a connection")??)
     }
 }
 

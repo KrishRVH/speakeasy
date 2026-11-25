@@ -430,7 +430,7 @@ fn sha256(bytes: &[u8]) -> String {
     Sha256::digest(bytes)
         .iter()
         .fold(String::new(), |mut hex, byte| {
-            write!(hex, "{byte:02x}").expect("String formatting cannot fail");
+            write!(hex, "{byte:02x}").expect("String formatting can't fail");
             hex
         })
 }
