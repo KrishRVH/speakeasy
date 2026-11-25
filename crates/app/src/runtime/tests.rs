@@ -16,6 +16,7 @@ use super::{
     *,
 };
 use crate::{
+    control::Command,
     recognition_terms::Terms,
     testing::{PATIENCE, still_pending},
 };
@@ -778,6 +779,12 @@ impl<Host: Sync> Harness<Host> {
 
     fn input(&self, input: Input) {
         self.runtime.input.deliver(input);
+    }
+
+    async fn call(&self, command: Command) -> anyhow::Result<Reply> {
+        let (call, receipt) = Call::new(command);
+        self.runtime.control(call);
+        receive(&receipt).await
     }
 
     fn report(&self, report: Report) -> anyhow::Result<()> {

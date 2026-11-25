@@ -123,7 +123,7 @@ async fn a_rollback_waits_out_the_show_that_a_theme_save_keeps() -> anyhow::Resu
     h.transcribe_next_as("look here").await?;
     receive(&h.published).await?;
     h.observe(|snapshot| !snapshot.phase.is_active()).await?;
-    control(&h, Command::Status).await?;
+    h.call(Command::Status).await?;
     assert!(
         h.snapshot().message.contains("Show copied"),
         "The rollback that waited out a Show replaced the Show's result"

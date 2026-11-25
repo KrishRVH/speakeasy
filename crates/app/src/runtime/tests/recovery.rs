@@ -4,10 +4,6 @@ use speakeasy_show::Take;
 use super::*;
 use crate::audio::fixture::square_wave;
 
-async fn interrupted() -> anyhow::Result<(tempfile::TempDir, Interrupted)> {
-    interrupted_with_audio(false).await
-}
-
 async fn interrupted_with_audio(
     keep_audio: bool,
 ) -> anyhow::Result<(tempfile::TempDir, Interrupted)> {
@@ -64,7 +60,7 @@ async fn interrupted_with_audio(
 #[tokio::test(start_paused = true)]
 async fn recovery_waits_for_dictation_then_saves_without_microphone_speech_or_copy()
 -> anyhow::Result<()> {
-    let (_root, interrupted) = interrupted().await?;
+    let (_root, interrupted) = interrupted_with_audio(false).await?;
     let (recovery, recovering) = gate(1);
     let mut h = Harness::with_ports(Config::default(), |ports| {
         ports.show_recovery = Some(recovery);

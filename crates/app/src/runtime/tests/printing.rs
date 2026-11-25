@@ -24,12 +24,6 @@ async fn captured(h: &mut Harness) -> anyhow::Result<String> {
 }
 
 impl Harness {
-    async fn call(&self, command: Command) -> anyhow::Result<Reply> {
-        let (call, receipt) = Call::new(command);
-        self.runtime.control(call);
-        receive(&receipt).await
-    }
-
     fn print(&self, session: String) -> async_channel::Receiver<Reply> {
         let (call, receipt) = Call::new(Command::Print { session });
         self.runtime.control(call);
