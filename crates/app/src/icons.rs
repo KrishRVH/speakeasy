@@ -17,6 +17,7 @@ pub(crate) const PLUS: &str = "icons/symbols/plus.svg";
 pub(crate) const MORE: &str = "icons/symbols/more.svg";
 pub(crate) const ARROW_RIGHT: &str = "icons/symbols/arrow-right.svg";
 pub(crate) const INFO: &str = "icons/symbols/info.svg";
+pub(crate) const TRASH: &str = "icons/symbols/trash.svg";
 
 const ASSETS: &[(&str, &[u8])] = &[
     (KEYSTONE, include_bytes!("../assets/keystone.svg")),
@@ -49,6 +50,7 @@ const ASSETS: &[(&str, &[u8])] = &[
         include_bytes!("../assets/symbols/arrow-right.svg"),
     ),
     (INFO, include_bytes!("../assets/symbols/info.svg")),
+    (TRASH, include_bytes!("../assets/symbols/trash.svg")),
 ];
 
 pub(crate) struct Icons;

@@ -332,6 +332,16 @@ impl Review {
         cx.notify();
     }
 
+    fn open_row(&mut self, offer: usize, cx: &mut Context<'_, Self>) {
+        if let Some(row) = self.library.rows.get(offer)
+            && !self.library.is_selected(&row.directory)
+        {
+            self.mode = Mode::Keyframes;
+            let key = self.library.select(row.directory.clone(), 0);
+            self.open_selected(key, None, cx);
+        }
+    }
+
     fn open_selected(
         &mut self,
         key: Key,
@@ -856,15 +866,7 @@ impl Review {
                     self.request = request;
                 }
             },
-            Action::Show(offer) => {
-                if let Some(row) = self.library.rows.get(offer)
-                    && !self.library.is_selected(&row.directory)
-                {
-                    self.mode = Mode::Keyframes;
-                    let key = self.library.select(row.directory.clone(), 0);
-                    self.open_selected(key, None, cx);
-                }
-            },
+            Action::Show(offer) => self.open_row(offer, cx),
             Action::Frame(index) => {
                 self.request = None;
                 if self
@@ -879,7 +881,7 @@ impl Review {
                 }
             },
             Action::Recover => self.recover(cx),
-            Action::Delete(offer) => self.ask_delete(offer),
+            Action::Delete(offer) => self.ask_delete(offer, cx),
             Action::ConfirmDelete(offer) => self.delete(offer, cx),
             Action::Discard => {
                 if let Some(interrupted) =

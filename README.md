@@ -196,8 +196,8 @@ the default WSL distribution's drive mount.
 
 Managed Shows and their saved audio expire seven days after recording unless you choose **Keep
 Show**. **Stop keeping** restores the original expiry date, so a Show already past it goes at the
-next cleanup. **Delete Show…** removes the selected bundle after confirmation, with exported copies
-and any pending recovery audio left in place.
+next cleanup. **Delete Show…**, or the trash button on a Show in the list, removes that bundle after
+confirmation, with exported copies and any pending recovery audio left in place.
 
 - **Export ZIP…** writes a portable copy of the evidence and edited summary. Saved audio and
   recovery audio stay in Speakeasy.

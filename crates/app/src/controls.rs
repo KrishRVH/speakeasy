@@ -177,6 +177,27 @@ impl<'a> Kit<'a> {
             .child(icon(path, 16.0, palette.muted))
     }
 
+    /// A small trash button in the theme's red that asks to delete one item; the deletion itself
+    /// still confirms.
+    pub(crate) fn trash_button(
+        self,
+        id: impl Into<ElementId>,
+        label: impl Into<SharedString>,
+        on_click: Option<impl Fn(&ClickEvent, &mut Window, &mut App) + 'static>,
+    ) -> Stateful<Div> {
+        let palette = self.palette;
+        let enabled = on_click.is_some();
+        let wash = alpha(palette.live, 0.12);
+        self.pressable(id, label.into(), Role::Button, Focus::Tint, on_click)
+            .size(px(24.0))
+            .justify_center()
+            .rounded(CORNER)
+            .border_1()
+            .border_color(alpha(palette.live, 0.0))
+            .when(enabled, |button| button.hover(move |style| style.bg(wash)))
+            .child(icon(icons::TRASH, 14.0, palette.live))
+    }
+
     pub(crate) fn switch(
         self,
         id: impl Into<ElementId>,

@@ -1,8 +1,8 @@
 use std::{sync::Arc, time::SystemTime};
 
 use gpui::{
-    AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, MouseDownEvent,
-    Pixels, SharedString, Stateful, Window, div, img, prelude::*, px, rgb,
+    AnyElement, App, ClickEvent, Context, Div, ElementId, FontWeight, KeyDownEvent, MouseButton,
+    MouseDownEvent, Pixels, SharedString, Stateful, Window, div, img, prelude::*, px, rgb,
 };
 use speakeasy_show::NarrationLoss;
 
@@ -211,6 +211,16 @@ impl Review {
             .collect::<Vec<_>>()
             .join(", ");
         let hover = palette.hover();
+        let trash = matches!(row.kind, Kind::Saved).then(|| {
+            let delete = Action::Delete(index);
+            kit.trash_button(
+                id(delete),
+                format!("Delete Show {recorded}"),
+                press(delete, self.can_ask_delete(row), cx),
+            )
+            // Tab already visits every row, and More's Delete Show… is the keyboard path.
+            .tab_stop(false)
+        });
         pressable(
             kit,
             palette,
@@ -227,7 +237,8 @@ impl Review {
         .flex_col()
         .items_start()
         .gap(px(3.0))
-        .px(px(12.0))
+        .pl(px(12.0))
+        .pr(px(40.0))
         .py(px(10.0))
         .rounded(px(8.0))
         .when(current, |item| item.bg(hover).child(bar(palette)))
@@ -247,6 +258,18 @@ impl Review {
                     .flex_wrap()
                     .gap(px(4.0))
                     .children(tags.into_iter().map(|(tag, tone)| kit.tag(tag, tone))),
+            )
+        })
+        .when_some(trash, |item, trash| {
+            item.child(
+                div()
+                    .absolute()
+                    .top(px(8.0))
+                    .right(px(8.0))
+                    .cursor_default()
+                    // A press on the trash, even a dimmed one, never also opens the row beneath.
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+                    .child(trash),
             )
         })
     }
@@ -1165,7 +1188,7 @@ pub(super) fn id(action: Action) -> ElementId {
         Action::Discard => "discard-show".into(),
         Action::ConfirmDiscard => "confirm-discard-show".into(),
         Action::CancelDiscard => "cancel-discard-show".into(),
-        Action::Delete(_) => "delete-show".into(),
+        Action::Delete(index) => ("delete-show", index).into(),
         Action::ConfirmDelete(_) => "confirm-delete-show".into(),
         Action::CancelDelete => "cancel-delete-show".into(),
         Action::Jump(Direction::Forward) => "forward-show".into(),

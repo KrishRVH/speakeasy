@@ -24,8 +24,25 @@ impl Review {
         })
     }
 
-    pub(super) fn ask_delete(&mut self, offer: usize) {
-        if self.deletable(offer).is_some() {
+    /// Whether a saved row can ask to be deleted. Asking selects the row, which cancels what the
+    /// previous selection was loading or copying; the confirmation enables once the row loads.
+    pub(super) fn can_ask_delete(&self, row: &Row) -> bool {
+        matches!(row.kind, Kind::Saved)
+            && self.root.is_some()
+            && self.listing.is_none()
+            && self.write.is_none()
+            && self.export.is_none()
+    }
+
+    /// Selects the row first, so the confirmation names and shows the Show it deletes.
+    pub(super) fn ask_delete(&mut self, offer: usize, cx: &mut Context<'_, Self>) {
+        if self
+            .library
+            .rows
+            .get(offer)
+            .is_some_and(|row| self.can_ask_delete(row))
+        {
+            self.open_row(offer, cx);
             self.confirm = Some(Confirm::Delete(offer));
         }
     }

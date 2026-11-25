@@ -1,3 +1,8 @@
+use gpui::{
+    Modifiers, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PlatformInput, Point,
+    point,
+};
+
 use super::*;
 
 #[expect(
@@ -30,6 +35,31 @@ pub(super) async fn exercise(
         cx,
     )
     .await?;
+    select(window, first, cx).await?;
+    let (trashed, trash) = trash_of(window, second, cx)?;
+    window.update(cx, |view, _, _| {
+        view.export = Some(Export::Choosing {
+            _task: Task::ready(()),
+        });
+    })?;
+    press(window, trash, cx)?;
+    window.update(cx, |view, _, _| {
+        ensure!(
+            view.library.is_selected(first) && view.confirm.is_none(),
+            "A dimmed trash opened the row beneath it"
+        );
+        view.export = None;
+        anyhow::Ok(())
+    })??;
+    press(window, trash, cx)?;
+    window.update(cx, |view, _, cx| {
+        ensure!(
+            view.library.is_selected(second) && view.confirm == Some(Confirm::Delete(trashed)),
+            "A row's trash didn't select its own Show and ask to delete it"
+        );
+        view.act(Action::CancelDelete, cx);
+        anyhow::Ok(())
+    })??;
     select(window, first, cx).await?;
     let offered = window.update(cx, |view, _, cx| {
         let offer = view
@@ -127,6 +157,72 @@ pub(super) async fn exercise(
     select(window, previous, cx).await?;
     assert!(previous.join("summary.md").is_file());
     Ok(())
+}
+
+/// The listed row for `path` and the center of its trash button, top right in the row.
+fn trash_of(
+    window: WindowHandle<Review>,
+    path: &Path,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<(usize, Point<Pixels>)> {
+    cx.update_window(window.into(), |_, window, cx| window.draw(cx).clear(cx))?;
+    window.read_with(cx, |view, _| {
+        let index = view
+            .library
+            .rows
+            .iter()
+            .position(|row| row.directory == path)
+            .context("The fixture is listed")?;
+        let row = view
+            .library_scroll
+            .bounds_for_item(index)
+            .context("The library has no bounds for the fixture's row")?;
+        let offset = view.library_scroll.offset();
+        Ok((
+            index,
+            point(
+                row.right() + offset.x - px(20.0),
+                row.top() + offset.y + px(20.0),
+            ),
+        ))
+    })?
+}
+
+fn press(
+    window: WindowHandle<Review>,
+    position: Point<Pixels>,
+    cx: &mut AsyncApp,
+) -> anyhow::Result<()> {
+    cx.update_window(window.into(), |_, window, cx| {
+        window.draw(cx).clear(cx);
+        window.dispatch_event(
+            PlatformInput::MouseMove(MouseMoveEvent {
+                position,
+                pressed_button: None,
+                modifiers: Modifiers::default(),
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseDown(MouseDownEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+                first_mouse: false,
+            }),
+            cx,
+        );
+        window.dispatch_event(
+            PlatformInput::MouseUp(MouseUpEvent {
+                button: MouseButton::Left,
+                position,
+                modifiers: Modifiers::default(),
+                click_count: 1,
+            }),
+            cx,
+        );
+    })
 }
 
 #[expect(
