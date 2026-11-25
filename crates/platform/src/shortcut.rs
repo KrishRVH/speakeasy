@@ -899,7 +899,7 @@ static WINDOWS: Layout = Layout {
         Modifier::Shift,
     ],
     keys: WINDOWS_KEYS,
-    // Versions through 0.12 saved the default under this one name, so every settings file they
+    // Versions through 0.12.0 saved the default under this one name, so every settings file they
     // wrote holds it.
     aliases: &[("control_windows", WindowsShortcut::CONTROL_WINDOWS.0)],
     typing: ModifierSet::SHIFT,
