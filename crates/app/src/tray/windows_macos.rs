@@ -172,8 +172,8 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         &settings,
         &quit,
     ])?;
-    let drawn = (state.status.indicator, state.theme);
-    let icon = build_icon(menu, icon::raster(drawn.0, drawn.1, ICON_STYLE))?;
+    let (indicator, theme) = (state.status.indicator, state.theme);
+    let icon = build_icon(menu, icon::raster(indicator, theme, ICON_STYLE))?;
     let (commands, refreshes) = queue_commands(
         [
             (settings.id().clone(), TrayCommand::Settings),
@@ -220,7 +220,7 @@ pub(crate) fn install(cx: &mut App) -> anyhow::Result<()> {
         show_area,
         copy_last_show,
         open_last_show,
-        drawn: Some(drawn),
+        drawn: Some((indicator, theme)),
     };
     // The items already hold this state; presenting it fills the tooltip and preset submenu.
     presenter.present(state);
