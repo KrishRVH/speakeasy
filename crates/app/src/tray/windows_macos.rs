@@ -69,6 +69,7 @@ impl Presenter {
             paste_last,
             show_screen,
             show_area,
+            choose_preset: _,
         } = state.menu;
         for (entry, TrayItem { label, enabled }) in [
             (&self.pause, pause),
@@ -110,7 +111,7 @@ impl Presenter {
         self.presets.set_enabled(!self.preset_items.is_empty());
         for (name, item) in &self.preset_items {
             item.set_checked(state.preset.as_ref() == Some(name));
-            item.set_enabled(state.menu.show_screen.enabled);
+            item.set_enabled(state.menu.choose_preset);
         }
         Ok(())
     }

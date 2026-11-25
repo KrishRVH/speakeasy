@@ -73,9 +73,11 @@ fn dictation_menu(service: ServiceState, snapshot: &Snapshot, mode: LaunchMode) 
 
     let startable = interactive && running && snapshot.desktop_ready;
     #[cfg(any(target_os = "windows", target_os = "macos"))]
+    let between_sessions = startable && activity == Activity::Idle;
+    #[cfg(any(target_os = "windows", target_os = "macos"))]
     let show = |label| TrayItem {
         label,
-        enabled: startable && activity == Activity::Idle,
+        enabled: between_sessions,
     };
     TrayMenu {
         pause: TrayItem {
@@ -119,6 +121,8 @@ fn dictation_menu(service: ServiceState, snapshot: &Snapshot, mode: LaunchMode) 
         show_screen: show("Record the screen for a Show"),
         #[cfg(any(target_os = "windows", target_os = "macos"))]
         show_area: show("Record an area for a Show…"),
+        #[cfg(any(target_os = "windows", target_os = "macos"))]
+        choose_preset: between_sessions,
     }
 }
 
