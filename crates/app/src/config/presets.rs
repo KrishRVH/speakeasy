@@ -38,11 +38,7 @@ impl Preset {
             "Choose the engine executable and a matching model before saving a preset."
         );
         config.validate_choices()?;
-        Ok(Self::take(name, config))
-    }
-
-    fn take(name: &str, config: &Config) -> Self {
-        Self {
+        Ok(Self {
             name: name.to_owned(),
             engine: config.engine,
             engine_executable: config.engine_executable.clone(),
@@ -54,7 +50,7 @@ impl Preset {
             vocabulary: config.vocabulary.clone(),
             threads: config.threads,
             use_gpu: config.use_gpu,
-        }
+        })
     }
 
     pub(crate) fn name(&self) -> &str {
