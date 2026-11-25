@@ -11,6 +11,8 @@ use std::{
 };
 
 use anyhow::Context as _;
+use base64::{Engine as _, engine::general_purpose::STANDARD_NO_PAD};
+use sha2::{Digest as _, Sha256};
 use speakeasy_show::{Demo, Location, Typeface};
 
 use super::{
@@ -83,7 +85,7 @@ including pending audio. Saved Show bundles are unchanged.
 Recover interrupted Shows in the Shows window; recovery leaves the clipboard untouched.
 mcp serves read-only evidence tools over stdio within explicit roots; --setup prints client snippets.
 skill prints the agent reading guide for this installed version.
---install DIR writes DIR/speakeasy-show/SKILL.md; identical content is unchanged and edits are never overwritten.
+--install DIR writes DIR/speakeasy-show/SKILL.md and updates a copy it wrote; edits are never overwritten.
 demo writes a simulated Show and prints its summary.
 All commands work without a display, microphone, speech engine or running Speakeasy app.";
 
@@ -381,21 +383,46 @@ fn locate(show: &Path) -> anyhow::Result<PathBuf> {
     })?)
 }
 
+/// Ends an installed guide with the digest of the text above it. A later install replaces a copy
+/// whose text still matches its digest, from any earlier version, and never one the user edited.
+const STAMP: &str = "\n<!-- Speakeasy updates this guide until it is edited. sha256 ";
+
+fn stamped(guide: &str) -> String {
+    let digest = STANDARD_NO_PAD.encode(Sha256::digest(guide));
+    format!("{guide}{STAMP}{digest} -->\n")
+}
+
+fn unedited(installed: &[u8]) -> bool {
+    std::str::from_utf8(installed).is_ok_and(|installed| {
+        installed
+            .rfind(STAMP)
+            .and_then(|end| installed.get(..end))
+            .is_some_and(|guide| stamped(guide) == installed)
+    })
+}
+
 fn install_skill(directory: &Path) -> anyhow::Result<PathBuf> {
     let directory = std::path::absolute(directory)?.join("speakeasy-show");
     std::fs::create_dir_all(&directory).context("Can't create the agent's skill directory")?;
     let path = directory.join("SKILL.md");
+    let current = stamped(SKILL);
     match std::fs::read(&path) {
-        Ok(existing) if existing == SKILL.as_bytes() => return Ok(path),
+        Ok(installed) if installed == current.as_bytes() => return Ok(path),
+        Ok(installed) if unedited(&installed) => {},
         Ok(_) => anyhow::bail!(
-            "The installed Show skill differs; choose a new skills directory or preserve your edits before replacing it"
+            "{} differs from the guide Speakeasy installed, so it may hold your edits; move it aside to install the current guide",
+            path.display()
         ),
         Err(error) if error.kind() == io::ErrorKind::NotFound => {},
         Err(error) => return Err(error).context("Can't read the existing Show skill"),
     }
-    std::fs::File::create_new(&path)
-        .context("Can't install the Show skill without replacing an existing file")?
-        .write_all(SKILL.as_bytes())?;
+    // Renamed over the old copy, so a failed write never leaves half a guide.
+    let mut staged = tempfile::NamedTempFile::new_in(&directory)
+        .context("Can't write into the agent's skill directory")?;
+    staged.write_all(current.as_bytes())?;
+    staged
+        .persist(&path)
+        .context("Can't replace the installed Show skill")?;
     Ok(path)
 }
 

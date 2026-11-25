@@ -35,14 +35,37 @@ async fn interrupted(parent: &Path) -> anyhow::Result<store::checkpoint::Interru
 }
 
 #[test]
-fn skill_installation_is_repeatable_and_preserves_existing_edits() -> anyhow::Result<()> {
+fn skill_installation_updates_its_own_copy_and_preserves_edits() -> anyhow::Result<()> {
     let root = tempfile::tempdir()?;
     let path = install_skill(root.path())?;
-    assert_eq!(fs::read_to_string(&path)?, SKILL);
+    let installed = fs::read_to_string(&path)?;
+    assert!(
+        installed.starts_with(SKILL),
+        "The installed guide is not the embedded one"
+    );
     assert_eq!(install_skill(root.path())?, path);
-    fs::write(&path, "user's skill edits")?;
-    assert!(install_skill(root.path()).is_err());
-    assert_eq!(fs::read_to_string(path)?, "user's skill edits");
+
+    fs::write(&path, stamped("An earlier version of the guide.\n"))?;
+    install_skill(root.path())?;
+    assert_eq!(
+        fs::read_to_string(&path)?,
+        installed,
+        "An unedited earlier copy was not updated"
+    );
+
+    let edited = [
+        installed.replacen("Speakeasy Show", "Speakeasy recording", 1),
+        "user's skill edits".to_owned(),
+    ];
+    for edited in edited {
+        fs::write(&path, &edited)?;
+        assert!(install_skill(root.path()).is_err());
+        assert_eq!(
+            fs::read_to_string(&path)?,
+            edited,
+            "An edited guide was overwritten"
+        );
+    }
     Ok(())
 }
 
